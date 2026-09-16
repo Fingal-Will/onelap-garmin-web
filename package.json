@@ -1,0 +1,24 @@
+{
+  "name": "onelap-garmin-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "description": "GitHub Pages console for a personal, private OneLap to Garmin Actions runner.",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "prepare:template": "node scripts/build-template.mjs",
+    "test": "node --test tests/*.test.js",
+    "check": "node scripts/check-source.mjs",
+    "build": "npm run prepare:template && vite build && node scripts/check-dist.mjs"
+  },
+  "dependencies": {
+    "libsodium-wrappers": "0.7.15",
+    "lucide": "1.46.0"
+  },
+  "devDependencies": {
+    "vite": "8.3.0"
+  }
+}

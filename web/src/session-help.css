@@ -1,0 +1,167 @@
+.session-help {
+  border-bottom: 1px solid #e7edef;
+  margin: 0 0 18px;
+  padding: 0 0 14px;
+}
+
+.session-help summary {
+  color: #166e68;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.session-help p {
+  color: #65737d;
+  font-size: 11px;
+  line-height: 1.7;
+  margin-top: 9px;
+}
+
+.session-help pre {
+  background: #f1f4f4;
+  border-radius: 6px;
+  color: #394d54;
+  font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin: 10px 0 0;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.oauth-field-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.oauth-field-actions .session-status {
+  margin: 0;
+}
+
+.oauth-dialog {
+  background: #fff;
+  border: 1px solid #d9e0e1;
+  border-radius: 8px;
+  color: #25323a;
+  flex-direction: column;
+  margin: auto;
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  max-width: min(480px, calc(100vw - 32px));
+  overflow: hidden;
+  padding: 0;
+  width: 100%;
+}
+
+.oauth-dialog[open] {
+  display: flex;
+}
+
+.oauth-dialog > form {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+  min-height: 0;
+}
+
+.oauth-dialog::backdrop {
+  background: rgb(22 35 40 / 58%);
+}
+
+.oauth-dialog-header {
+  align-items: flex-start;
+  border-bottom: 1px solid #e7edef;
+  display: flex;
+  flex: none;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 20px 22px 16px;
+}
+
+.oauth-dialog-header h2 {
+  font-size: 18px;
+}
+
+.oauth-dialog-header p {
+  color: #65737d;
+  font-size: 11px;
+  line-height: 1.7;
+  margin-top: 5px;
+}
+
+.icon-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #65737d;
+  display: inline-flex;
+  flex: none;
+  height: 34px;
+  justify-content: center;
+  padding: 0;
+  width: 34px;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: #edf5f4;
+  color: #166e68;
+}
+
+.oauth-dialog-body {
+  display: grid;
+  gap: 15px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 22px 22px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.oauth-dialog .notice {
+  margin-top: 0;
+}
+
+.oauth-dialog-status {
+  background: #f4f7f7;
+  border: 1px solid #dde5e6;
+  border-radius: 7px;
+  color: #65737d;
+  font-size: 11px;
+  line-height: 1.7;
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
+.oauth-dialog-footer {
+  align-items: center;
+  border-top: 1px solid #e7edef;
+  display: flex;
+  flex: none;
+  gap: 9px;
+  justify-content: flex-end;
+  padding: 15px 22px 18px;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-width: 520px) {
+  .oauth-dialog {
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+    max-width: calc(100vw - 16px);
+  }
+
+  .oauth-dialog-header,
+  .oauth-dialog-body,
+  .oauth-dialog-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .oauth-dialog-footer .button {
+    flex: 1;
+  }
+}

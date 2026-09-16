@@ -1,0 +1,18 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+node_modules/
+npm-debug.log*
+
+data/downloads/
+data/processed/
+data/oauth-results/
+data/*.lock
+data/*.session.json
+*.session.json
+
+# SQLite 台账需要提交到私有仓库，WAL 临时文件不提交。
+data/*.db-shm
+data/*.db-wal

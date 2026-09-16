@@ -1,0 +1,18 @@
+{
+  "name": "onelap-garmin-dual-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Download OneLap FIT activities and upload them independently to Garmin China and Garmin Global.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "check": "node --check uploader/garmin-upload.js && node --check uploader/garmin-activities.js && node --check uploader/garmin-session.js && node --check scripts/garmin_oauth.js && node --test tests/test_garmin_upload.js tests/test_garmin_activities.js tests/test_garmin_oauth.js",
+    "session:cn": "node --env-file=.env uploader/garmin-session.js --region CN --output data/garmin-cn.session.json",
+    "session:global": "node --env-file=.env uploader/garmin-session.js --region GLOBAL --output data/garmin-global.session.json"
+  },
+  "dependencies": {
+    "@gooin/garmin-connect": "1.8.7"
+  }
+}

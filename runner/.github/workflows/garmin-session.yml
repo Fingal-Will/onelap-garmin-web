@@ -1,0 +1,119 @@
+name: 获取 Garmin OAuth 会话
+run-name: ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Garmin 区域
+        type: choice
+        required: true
+        options: ["CN", "GLOBAL"]
+      request_id:
+        description: 网页生成的 32 位请求编号
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: garmin-oauth-${{ github.repository }}-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    if: ${{ github.event.repository.private == true && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      REQUEST_ID: ${{ inputs.request_id }}
+
+    steps:
+      - name: 检查私有仓库、默认分支和请求编号
+        id: guard
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          REGION: ${{ inputs.region }}
+        run: |
+          set -euo pipefail
+          if [[ "$REPOSITORY_PRIVATE" != "true" || "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::认证仅允许在私有仓库的默认分支运行。"
+            exit 1
+          fi
+          if [[ ! "$REQUEST_ID" =~ ^[A-F0-9]{32}$ ]]; then
+            echo "::error::请求编号格式无效。"
+            exit 1
+          fi
+          if [[ "$REGION" != "CN" && "$REGION" != "GLOBAL" ]]; then
+            echo "::error::Garmin 区域无效。"
+            exit 1
+          fi
+
+      - name: 检出默认分支
+        id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 安装运行依赖
+        run: npm ci --ignore-scripts
+
+      - name: 获取并加密 Garmin OAuth 会话
+        id: obtain
+        env:
+          GARMIN_OAUTH_REGION: ${{ inputs.region }}
+          GARMIN_OAUTH_REQUEST_ID: ${{ inputs.request_id }}
+          GARMIN_OAUTH_USERNAME: ${{ secrets[format('GARMIN_OAUTH_{0}_USERNAME', inputs.request_id)] }}
+          GARMIN_OAUTH_PASSWORD: ${{ secrets[format('GARMIN_OAUTH_{0}_PASSWORD', inputs.request_id)] }}
+          GARMIN_OAUTH_RESULT_KEY: ${{ secrets[format('GARMIN_OAUTH_{0}_RESULT_KEY', inputs.request_id)] }}
+        run: node scripts/garmin_oauth.js
+
+      - name: 发布临时加密 OAuth 结果
+        if: ${{ success() && steps.obtain.outcome == 'success' }}
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cleanup_git_credentials() {
+            git config --local --unset-all http.https://github.com/.extraheader >/dev/null 2>&1 || true
+            unset REPOSITORY_TOKEN basic_auth
+          }
+          trap cleanup_git_credentials EXIT
+
+          basic_auth="$(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 | tr -d '\n')"
+          git config --local --replace-all http.https://github.com/.extraheader "AUTHORIZATION: basic ${basic_auth}"
+          unset REPOSITORY_TOKEN basic_auth
+
+          result="data/oauth-results/${REQUEST_ID}.json"
+          if [[ ! -f "$result" ]]; then
+            echo "::error::认证结果文件不存在。"
+            exit 1
+          fi
+          remote="https://github.com/${GITHUB_REPOSITORY}.git"
+          ref="refs/heads/oauth-result-${REQUEST_ID}"
+          if git ls-remote --exit-code "$remote" "$ref" >/dev/null 2>&1; then
+            echo "::error::该请求编号已有未清理的认证结果。请在网页中删除旧结果后重试。"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          blob="$(git hash-object -w "$result")"
+          tree="$(printf '100644 blob %s\tresult.json\n' "$blob" | git mktree)"
+          commit="$(printf '%s\n' 'chore: publish encrypted Garmin OAuth result' | git commit-tree "$tree")"
+          if ! git push "$remote" "$commit:$ref"; then
+            echo "::error::发布认证结果失败。不会强制覆盖远程 ref；请重新发起认证。"
+            exit 1
+          fi

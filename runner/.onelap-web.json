@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "schema_version": 1,
+  "project": "onelap-garmin-web",
+  "engine": {
+    "repository": "https://github.com/Fingal-Will/onelap-garmin-dual-sync",
+    "head": "002fff7c096884472ee0eb4601b49f5105787515",
+    "snapshot": "working-tree",
+    "includes_uncommitted_changes": true
+  }
+}
