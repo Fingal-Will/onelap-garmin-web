@@ -13,7 +13,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  enable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+    steps:
+      - name: 启用并配置 Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+        with:
+          enablement: true
+
   build:
+    needs: enable
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -21,6 +33,8 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: 配置 Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -39,11 +53,6 @@ jobs:
 
       - name: 构建网页
         run: npm run build
-
-      - name: 配置 Pages
-        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
-        with:
-          enablement: true
 
       - name: 上传 Pages 工件
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
