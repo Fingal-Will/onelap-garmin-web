@@ -26,11 +26,10 @@ GitHub Packages 不承载网页或任务，本项目不依赖 Packages。以后�
 ## 部署控制台
 
 1. 新建一个用于本项目源码的 GitHub 仓库，把本目录提交到 `main` 分支。
-2. 推送后，`.github/workflows/pages.yml` 会尝试启用 Pages，测试、构建并部署
-   `dist/`。
-3. 打开 Actions 中的 Pages 任务，或在仓库 Pages 设置中取得网址。如果组织策略
-   禁止工作流自动启用 Pages，再在 `Settings → Pages` 中把 Source 设为
-   **GitHub Actions**，然后重新运行部署任务。
+2. 首次部署前，在仓库 `Settings → Pages` 中把 Source 设为 **GitHub Actions**。
+   GitHub 不允许仓库自带的 `GITHUB_TOKEN` 替仓库所有者完成这项首次启用操作。
+3. 推送后，`.github/workflows/pages.yml` 会测试、构建并部署 `dist/`。打开 Actions
+   中的 Pages 任务或仓库 Pages 设置即可取得网址。
 
 本地验证只需要 Node.js 22.12 或更高版本：
 

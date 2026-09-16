@@ -13,19 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  enable:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      pages: write
-    steps:
-      - name: 启用并配置 Pages
-        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
-        with:
-          enablement: true
-
   build:
-    needs: enable
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -70,6 +58,9 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: 读取 Pages 配置
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
       - name: 部署 Pages
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
