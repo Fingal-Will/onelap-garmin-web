@@ -8,12 +8,9 @@ import {
 import './styles.css';
 import './session-help.css';
 
-if (window.self !== window.top) {
-  document.documentElement.replaceChildren();
-  throw new Error('此控制台不能在嵌入式页面中运行。');
-}
-
 const app = document.querySelector('#app');
+if (!app) throw new Error('页面缺少应用入口。');
+const embedded = window.self !== window.top;
 
 const state = {
   client: null,
@@ -694,7 +691,6 @@ function buildInterface() {
     element('div', { class: 'aside-heading' }, [element('h2', { id: 'runs-title', text: '最近运行' }), button('刷新', { small: true, icon: 'refresh', onClick: () => refreshRuns(), disabled: true })]),
     element('ul', { class: 'run-list', id: 'run-list', 'aria-live': 'polite' }),
   ]);
-  renderRuns([]);
 
   const routeCard = element('section', { class: 'card aside-card route-card', 'aria-labelledby': 'route-title' }, [
     element('div', { class: 'aside-heading' }, [element('h2', { id: 'route-title', text: '运行路径' }), icon('activity', true)]),
@@ -745,6 +741,7 @@ function buildInterface() {
     element('footer', { class: 'footer' }, [element('span', {}, [element('strong', { text: '个人私有仓库工具' }), document.createTextNode(' · 凭据仅由 GitHub Actions 管理')]), element('a', { href: 'https://docs.github.com/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions', target: '_blank', rel: 'noopener noreferrer', text: 'GitHub Secrets 文档' })]),
   ]);
   app.replaceChildren(element('div', { class: 'shell' }, [sidebar, element('div', { class: 'workspace' }, [topbar, main])]), oauthDialog);
+  renderRuns([]);
 
   for (const node of document.querySelectorAll('button')) {
     if (node.closest('#connection-form') || node.textContent === '断开并清空本页凭据') continue;
@@ -760,16 +757,31 @@ function buildInterface() {
   setBusy(false);
 }
 
-buildInterface();
-window.setInterval(() => { void pollRuns(); }, 30_000);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') void pollRuns();
-});
-window.addEventListener('pagehide', () => {
-  disconnect();
-});
-window.addEventListener('beforeunload', (event) => {
-  if (!state.oauthRunning) return;
-  event.preventDefault();
-  event.returnValue = '';
-});
+function renderEmbeddedWarning() {
+  app.replaceChildren(element('main', { class: 'startup-state' }, [
+    element('section', { class: 'startup-panel', role: 'alert' }, [
+      element('p', { class: 'startup-label', text: 'ONELAP GARMIN SYNC' }),
+      element('h1', { text: '请在新窗口打开控制台' }),
+      element('p', { text: '为保护 GitHub Token 和账号凭据，控制台不在嵌入式页面中运行。' }),
+      element('a', { class: 'button primary', href: './', target: '_blank', rel: 'noopener noreferrer', text: '在新窗口打开' }),
+    ]),
+  ]));
+}
+
+if (embedded) {
+  renderEmbeddedWarning();
+} else {
+  buildInterface();
+  window.setInterval(() => { void pollRuns(); }, 30_000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void pollRuns();
+  });
+  window.addEventListener('pagehide', () => {
+    disconnect();
+  });
+  window.addEventListener('beforeunload', (event) => {
+    if (!state.oauthRunning) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+}

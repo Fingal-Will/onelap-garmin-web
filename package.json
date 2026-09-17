@@ -12,13 +12,14 @@
     "prepare:template": "node scripts/build-template.mjs",
     "test": "node --test tests/*.test.js",
     "check": "node scripts/check-source.mjs",
-    "build": "npm run prepare:template && vite build && node scripts/check-dist.mjs"
+    "build": "npm run prepare:template && vite build && node scripts/check-dist.mjs && node scripts/smoke-dist.mjs"
   },
   "dependencies": {
     "libsodium-wrappers": "0.7.15",
     "lucide": "1.46.0"
   },
   "devDependencies": {
+    "linkedom": "0.18.13",
     "vite": "8.3.0"
   }
 }
