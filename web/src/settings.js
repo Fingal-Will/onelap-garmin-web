@@ -65,6 +65,49 @@ function integer(value, label, min, max, optional = false) {
   return String(parsed);
 }
 
+/** Resolve AUTO using complete saved OAuth pairs; explicit choices remain strict. */
+export function resolveSyncTargets(strategy = 'AUTO', secretNames = []) {
+  if (!['AUTO', 'CN', 'GLOBAL', 'CN,GLOBAL'].includes(strategy)) {
+    throw new Error('请选择自动判断、中国区、国际区或双区同步。');
+  }
+  if (strategy !== 'AUTO') return strategy;
+  const names = new Set(secretNames);
+  return ['CN', 'GLOBAL'].filter((region) => names.has(`GARMIN_${region}_OAUTH1`)
+    && names.has(`GARMIN_${region}_OAUTH2`)).join(',');
+}
+
+export function requireSyncTargets(strategy, secretNames) {
+  const targets = resolveSyncTargets(strategy, secretNames);
+  if (!targets) throw new Error('请至少配置一个 Garmin 区域的完整会话，再保存或运行同步。');
+  const names = new Set(secretNames);
+  for (const region of targets.split(',')) {
+    if (!names.has(`GARMIN_${region}_OAUTH1`) || !names.has(`GARMIN_${region}_OAUTH2`)) {
+      throw new Error(`默认同步设置需要 Garmin ${region === 'CN' ? '中国区' : '国际区'}的完整会话；请补充授权或修改默认同步区域。`);
+    }
+  }
+  return targets;
+}
+
+/** Reject settings an old installed runner cannot apply, keeping legacy saves usable. */
+export function adaptSettingsForRunner(update, manifest) {
+  const features = new Set(manifest?.features || []);
+  const variables = { ...update.variables };
+  const stravaSecrets = Object.keys(update.secrets).some((name) => name.startsWith('STRAVA_'));
+  if (!features.has('strava-sync')) {
+    if (variables.STRAVA_SYNC_ENABLED === 'true' || stravaSecrets) {
+      throw new Error('此私有仓库的同步程序尚不支持 Strava，请先按升级说明更新同步程序。');
+    }
+    delete variables.STRAVA_SYNC_ENABLED;
+  }
+  if (!features.has('shared-run-settings')) {
+    for (const [name, value] of Object.entries({ ONELAP_DISCOVERY_PAGES: '10', RECONCILE_RECENT_LIMIT: '20', SYNC_MAX_RETRIES: '8', SYNC_DRY_RUN: 'false' })) {
+      if (variables[name] !== value) throw new Error('此私有仓库尚不支持保存这些运行选项，请先按升级说明更新同步程序；旧版仍可在手动任务中临时选择页数和核对条数。');
+      delete variables[name];
+    }
+  }
+  return { secrets: update.secrets, variables };
+}
+
 /** Build a credential update. Blank secret fields mean preserve, never delete. */
 export function buildSettings(form, existing = { secrets: [], variables: {} }) {
   if (!isObject(form)) throw new Error('设置表单格式无效，请刷新页面后重试。');
@@ -93,22 +136,16 @@ export function buildSettings(form, existing = { secrets: [], variables: {} }) {
     throw new Error('请填写顽鹿账号和密码，或填写有效的顽鹿 Token。已保存的凭据可留空。');
   }
 
-  const targets = text(formValue(form, 'targets') || oldVariables.SYNC_TARGETS || 'CN,GLOBAL').trim();
-  if (!['CN', 'GLOBAL', 'CN,GLOBAL'].includes(targets)) {
-    throw new Error('请选择中国区、国际区或双区同步。');
-  }
+  const targets = text(formValue(form, 'targets') || oldVariables.SYNC_TARGETS || 'AUTO').trim();
+  resolveSyncTargets(targets);
   for (const [region, value] of [['CN', formValue(form, 'garminCnSession')], ['GLOBAL', formValue(form, 'garminGlobalSession')]]) {
     if (text(value).trim()) {
       const session = parseGarminSession(value);
       addSecret(`GARMIN_${region}_OAUTH1`, JSON.stringify(session.oauth1));
       addSecret(`GARMIN_${region}_OAUTH2`, JSON.stringify(session.oauth2));
     }
-    if (targets.split(',').includes(region)) {
-      if (!hasSecret(`GARMIN_${region}_OAUTH1`) || !hasSecret(`GARMIN_${region}_OAUTH2`)) {
-        throw new Error(`请导入 Garmin ${region === 'CN' ? '中国区' : '国际区'}的完整会话文件。`);
-      }
-    }
   }
+  requireSyncTargets(targets, [...knownSecrets, ...Object.keys(secrets)]);
 
   if (text(formValue(form, 'unitId')).trim()) {
     secrets.GARMIN_DEVICE_UNIT_ID = integer(formValue(form, 'unitId'), '设备 Unit ID', 1_000_000_000, 4_294_967_295);
@@ -125,6 +162,32 @@ export function buildSettings(form, existing = { secrets: [], variables: {} }) {
     GARMIN_DEVICE_SOFTWARE_VERSION: integer(formValue(form, 'softwareVersion'), '设备固件版本', 0, 65535, true),
     SYNC_TARGETS: targets,
   };
+
+  const enabled = formValue(form, 'stravaEnabled') === undefined
+    ? oldVariables.STRAVA_SYNC_ENABLED === 'true' : formValue(form, 'stravaEnabled') === true;
+  variables.STRAVA_SYNC_ENABLED = String(enabled);
+  for (const [field, name] of [
+    ['stravaClientId', 'STRAVA_CLIENT_ID'], ['stravaClientSecret', 'STRAVA_CLIENT_SECRET'],
+    ['stravaRefreshToken', 'STRAVA_REFRESH_TOKEN'], ['stravaSessionKey', 'STRAVA_SESSION_KEY'],
+  ]) {
+    const value = text(formValue(form, field)).trim();
+    if (name === 'STRAVA_CLIENT_ID' && value && !/^\d+$/.test(value)) throw new Error('Strava Client ID 必须是数字。');
+    if (name === 'STRAVA_SESSION_KEY' && value && encoder.encode(value).length < 32) {
+      throw new Error('Strava 会话加密密钥至少需要 32 字节。');
+    }
+    addSecret(name, value);
+  }
+  if (enabled) {
+    for (const name of ['STRAVA_CLIENT_ID', 'STRAVA_CLIENT_SECRET', 'STRAVA_REFRESH_TOKEN']) {
+      if (!hasSecret(name)) throw new Error(`已开启 Strava 同步，请填写 ${name}；已保存的值可留空。`);
+    }
+    if (!hasSecret('STRAVA_SESSION_KEY')) secrets.STRAVA_SESSION_KEY = createSessionKey();
+  }
+  variables.ONELAP_DISCOVERY_PAGES = integer(formValue(form, 'discoveryPages') ?? oldVariables.ONELAP_DISCOVERY_PAGES ?? '10', '默认发现页数', 0, 100);
+  variables.RECONCILE_RECENT_LIMIT = integer(formValue(form, 'recentLimit') ?? oldVariables.RECONCILE_RECENT_LIMIT ?? '20', '默认核对条数', 1, 200);
+  variables.SYNC_MAX_RETRIES = integer(formValue(form, 'maxRetries') ?? oldVariables.SYNC_MAX_RETRIES ?? '8', '最大重试次数', 1, 100);
+  variables.SYNC_DRY_RUN = String(formValue(form, 'globalDryRun') === undefined
+    ? oldVariables.SYNC_DRY_RUN === 'true' : formValue(form, 'globalDryRun') === true);
 
   if (text(formValue(form, 'sessionKey')).trim()) {
     if (encoder.encode(text(formValue(form, 'sessionKey')).trim()).length < 32) {

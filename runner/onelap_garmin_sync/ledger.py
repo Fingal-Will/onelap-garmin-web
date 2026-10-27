@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -51,7 +52,7 @@ class Ledger:
 
             CREATE TABLE IF NOT EXISTS uploads (
                 source_record_id TEXT NOT NULL,
-                target_region TEXT NOT NULL CHECK (target_region IN ('CN', 'GLOBAL')),
+                target_region TEXT NOT NULL CHECK (target_region IN ('CN', 'GLOBAL', 'STRAVA')),
                 status TEXT NOT NULL DEFAULT 'pending',
                 attempts INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT,
@@ -87,6 +88,7 @@ class Ledger:
         )
         self._migrate_activity_columns()
         self._migrate_upload_columns()
+        self._migrate_strava_target()
         self.connection.commit()
 
     def _migrate_activity_columns(self) -> None:
@@ -130,6 +132,50 @@ class Ledger:
                 self.connection.execute(
                     f"ALTER TABLE uploads ADD COLUMN {name} {declaration}"
                 )
+
+    def _migrate_strava_target(self) -> None:
+        # SQLite 不能直接修改 CHECK，事务重建保留全部历史列和上传结果。
+        schema = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'uploads'"
+        ).fetchone()[0]
+        if "'STRAVA'" in schema:
+            return
+        if not re.search(r"\bCHECK\s*\(", schema, re.I):
+            # 早期无目标约束的表本身已接受 STRAVA。
+            return
+        updated = re.sub(
+            r"('CN'\s*,\s*'GLOBAL')", "'CN', 'GLOBAL', 'STRAVA'", schema
+        )
+        if updated == schema:
+            raise ValueError("无法识别 uploads 表的目标区域约束，未迁移台账")
+        updated = updated.replace(
+            "CREATE TABLE uploads", "CREATE TABLE uploads_with_strava", 1
+        )
+        updated = updated.replace(
+            'CREATE TABLE "uploads"', "CREATE TABLE uploads_with_strava", 1
+        )
+        # 显式 SAVEPOINT 覆盖建表 DDL，避免中断后留下半迁移的临时表。
+        self.connection.execute("SAVEPOINT migrate_strava_target")
+        try:
+            self.connection.execute(updated)
+            columns = ", ".join(
+                '"' + row["name"] + '"'
+                for row in self.connection.execute("PRAGMA table_info(uploads)")
+            )
+            self.connection.execute(
+                f"INSERT INTO uploads_with_strava ({columns}) SELECT {columns} FROM uploads"
+            )
+            self.connection.execute("DROP TABLE uploads")
+            self.connection.execute("ALTER TABLE uploads_with_strava RENAME TO uploads")
+            self.connection.execute(
+                "CREATE INDEX idx_uploads_due ON uploads(status, next_retry_at, target_region)"
+            )
+        except BaseException:
+            self.connection.execute("ROLLBACK TO migrate_strava_target")
+            self.connection.execute("RELEASE migrate_strava_target")
+            raise
+        else:
+            self.connection.execute("RELEASE migrate_strava_target")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -332,7 +378,7 @@ class Ledger:
         status_placeholders = ",".join("?" for _ in statuses)
         now = utc_now()
         record_filter = ""
-        parameters: list[Any] = [*targets, *statuses, max_retries, now]
+        parameters: list[Any] = [*targets, *statuses, max_retries, now, int(retry_auth)]
         if record_id is not None:
             record_filter = "AND a.source_record_id = ?"
             parameters.append(record_id)
@@ -344,7 +390,8 @@ class Ledger:
             WHERE u.target_region IN ({placeholders})
               AND u.status IN ({status_placeholders})
               AND u.attempts < ?
-              AND (u.next_retry_at IS NULL OR u.next_retry_at <= ?)
+              AND (u.next_retry_at IS NULL OR u.next_retry_at <= ?
+                   OR (u.status = 'auth_required' AND ?))
               {record_filter}
             ORDER BY
               CASE WHEN a.activity_time IS NULL THEN 1 ELSE 0 END,
@@ -376,7 +423,8 @@ class Ledger:
               AND target_region IN ({placeholders})
               AND status IN ({status_placeholders})
               AND attempts < ?
-              AND (next_retry_at IS NULL OR next_retry_at <= ?)
+              AND (next_retry_at IS NULL OR next_retry_at <= ?
+                   OR (status = 'auth_required' AND ?))
             ORDER BY target_region
             """,
             (
@@ -385,6 +433,7 @@ class Ledger:
                 *statuses,
                 max_retries,
                 utc_now(),
+                int(retry_auth),
             ),
         ).fetchall()
         return [str(row["target_region"]) for row in rows]

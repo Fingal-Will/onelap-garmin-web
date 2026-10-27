@@ -5,17 +5,17 @@ on:
   workflow_dispatch:
     inputs:
       target_regions:
-        description: 核对区域（CN 中国区，GLOBAL 国际区）
+        description: 区域（DEFAULT 使用已保存设置，AUTO 按已配置账号判断）
         type: choice
         required: true
-        default: CN,GLOBAL
-        options: ["CN,GLOBAL", "CN", "GLOBAL"]
+        default: DEFAULT
+        options: ["DEFAULT", "GLOBAL", "CN", "CN,GLOBAL", "AUTO"]
       recent_activities:
         description: 按时间从新到旧核对最近多少条活动
         type: choice
         required: true
-        default: "20"
-        options: ["1", "10", "20", "50", "100", "200"]
+        default: "DEFAULT"
+        options: ["DEFAULT", "1", "10", "20", "50", "100", "200"]
       dry_run:
         description: 只核对并记录结果，不补传
         type: boolean
@@ -47,8 +47,11 @@ jobs:
       GARMINIZE_FIT_ENABLED: ${{ vars.GARMINIZE_FIT_ENABLED }}
       FIT_COORDINATE_TRANSFORM_ENABLED: ${{ vars.FIT_COORDINATE_TRANSFORM_ENABLED }}
       SCHEDULE_ENABLED: ${{ vars.SYNC_ENABLED }}
-      SCHEDULE_TARGETS: ${{ vars.SYNC_TARGETS || 'CN,GLOBAL' }}
-      SYNC_MAX_RETRIES: "8"
+      DEFAULT_TARGETS: ${{ vars.SYNC_TARGETS || 'AUTO' }}
+      SYNC_MAX_RETRIES: ${{ vars.SYNC_MAX_RETRIES || '8' }}
+      DEFAULT_DISCOVERY_PAGES: ${{ vars.ONELAP_DISCOVERY_PAGES || '10' }}
+      DEFAULT_RECENT_LIMIT: ${{ vars.RECONCILE_RECENT_LIMIT || '20' }}
+      DEFAULT_DRY_RUN: ${{ vars.SYNC_DRY_RUN || 'false' }}
       SYNC_DATA_DIR: data
       SYNC_DRY_RUN: "true"
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -74,6 +77,11 @@ jobs:
           persist-credentials: false
 
       - name: 准备并验证请求
+        env:
+          GARMIN_CN_OAUTH1: ${{ secrets.GARMIN_CN_OAUTH1 }}
+          GARMIN_CN_OAUTH2: ${{ secrets.GARMIN_CN_OAUTH2 }}
+          GARMIN_GLOBAL_OAUTH1: ${{ secrets.GARMIN_GLOBAL_OAUTH1 }}
+          GARMIN_GLOBAL_OAUTH2: ${{ secrets.GARMIN_GLOBAL_OAUTH2 }}
         run: python3 scripts/prepare_request.py
 
       - name: 配置 Python

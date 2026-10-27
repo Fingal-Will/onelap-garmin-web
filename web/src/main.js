@@ -1,16 +1,31 @@
+import { mountDashboard } from './dashboard.js';
 import { GitHubClient } from './github.js';
 import { authorizeGarmin, cleanupGarminOAuthSecrets } from './oauth.js';
-import { buildSettings } from './settings.js';
-import {
-  Activity, Check, Clock, Cloud, Download, ExternalLink, Key, Lock, Play, RefreshCw,
-  Server, Settings, ShieldCheck, Trash2, TriangleAlert, Upload, X,
-} from 'lucide';
+import { adaptSettingsForRunner, buildSettings, requireSyncTargets, resolveSyncTargets } from './settings.js';
+import Activity from 'lucide/dist/esm/icons/activity.mjs';
+import Check from 'lucide/dist/esm/icons/check.mjs';
+import Clock from 'lucide/dist/esm/icons/clock.mjs';
+import Cloud from 'lucide/dist/esm/icons/cloud.mjs';
+import Download from 'lucide/dist/esm/icons/download.mjs';
+import ExternalLink from 'lucide/dist/esm/icons/external-link.mjs';
+import Key from 'lucide/dist/esm/icons/key.mjs';
+import Lock from 'lucide/dist/esm/icons/lock.mjs';
+import Play from 'lucide/dist/esm/icons/play.mjs';
+import RefreshCw from 'lucide/dist/esm/icons/refresh-cw.mjs';
+import Server from 'lucide/dist/esm/icons/server.mjs';
+import Settings from 'lucide/dist/esm/icons/settings.mjs';
+import ShieldCheck from 'lucide/dist/esm/icons/shield-check.mjs';
+import Trash2 from 'lucide/dist/esm/icons/trash.mjs';
+import TriangleAlert from 'lucide/dist/esm/icons/triangle-alert.mjs';
+import Upload from 'lucide/dist/esm/icons/upload.mjs';
+import X from 'lucide/dist/esm/icons/x.mjs';
 import './styles.css';
 import './session-help.css';
 
 const app = document.querySelector('#app');
 if (!app) throw new Error('页面缺少应用入口。');
 const embedded = window.self !== window.top;
+let dashboard = null;
 
 const state = {
   client: null,
@@ -140,6 +155,7 @@ function setBusy(active, message = '') {
   document.body.classList.toggle('busy', active);
   for (const node of document.querySelectorAll('[data-requires-connection]')) node.disabled = active || !state.client;
   for (const node of document.querySelectorAll('[data-busy-lock]')) node.disabled = active;
+  dashboard?.lock();
   setText('activity-status', message || (state.client ? '已连接，等待操作。' : '连接后可安装、保存并运行任务。'));
 }
 
@@ -167,7 +183,7 @@ function safeGithubUrl(value) {
 }
 
 async function runTask(message, task) {
-  if (!state.client || state.busy) return;
+  if (!state.client || state.busy || dashboard?.isDemo()) return;
   try { setBusy(true, message); return await task(); }
   catch (error) { const messageText = errorMessage(error); setText('activity-status', messageText); toast(messageText, 'error'); }
   finally { setBusy(false); }
@@ -186,12 +202,21 @@ function collectSettings() {
     targets: get('settings-targets').value,
     coordinateTransform: get('coordinate-transform').checked,
     sessionKey: get('session-key').value,
+    stravaEnabled: get('strava-enabled').checked,
+    stravaClientId: get('strava-client-id').value,
+    stravaClientSecret: get('strava-client-secret').value,
+    stravaRefreshToken: get('strava-refresh-token').value,
+    stravaSessionKey: get('strava-session-key').value,
+    discoveryPages: get('default-pages').value,
+    recentLimit: get('default-recent').value,
+    maxRetries: get('max-retries').value,
+    globalDryRun: get('global-dry-run').checked,
   };
 }
 
 function credentialSummary() {
   const names = new Set(state.snapshot.secrets || []);
-  const expected = ['ONELAP_ACCOUNT', 'ONELAP_PASSWORD', 'ONELAP_TOKEN', 'GARMIN_CN_OAUTH1', 'GARMIN_CN_OAUTH2', 'GARMIN_GLOBAL_OAUTH1', 'GARMIN_GLOBAL_OAUTH2', 'GARMIN_DEVICE_UNIT_ID'];
+  const expected = ['ONELAP_ACCOUNT', 'ONELAP_PASSWORD', 'ONELAP_TOKEN', 'GARMIN_CN_OAUTH1', 'GARMIN_CN_OAUTH2', 'GARMIN_GLOBAL_OAUTH1', 'GARMIN_GLOBAL_OAUTH2', 'GARMIN_DEVICE_UNIT_ID', 'STRAVA_CLIENT_ID', 'STRAVA_CLIENT_SECRET', 'STRAVA_REFRESH_TOKEN', 'STRAVA_SESSION_KEY'];
   const present = expected.filter((name) => names.has(name));
   setText('credential-status', present.length ? `仓库已保存 ${present.length} 项受管凭据；网页不会读取 Secret 内容。` : '尚未检测到受管凭据。');
   const container = get('credential-list');
@@ -206,9 +231,17 @@ function applySnapshot(snapshot) {
   state.snapshot = snapshot;
   state.repository = snapshot.repository;
   const vars = snapshot.variables || {};
-  get('settings-targets').value = vars.SYNC_TARGETS || 'CN,GLOBAL';
-  get('sync-targets').value = vars.SYNC_TARGETS || 'CN,GLOBAL';
-  get('reconcile-targets').value = vars.SYNC_TARGETS || 'CN,GLOBAL';
+  get('settings-targets').value = vars.SYNC_TARGETS || 'AUTO';
+  get('default-pages').value = vars.ONELAP_DISCOVERY_PAGES || '10';
+  get('default-recent').value = vars.RECONCILE_RECENT_LIMIT || '20';
+  get('max-retries').value = vars.SYNC_MAX_RETRIES || '8';
+  get('global-dry-run').checked = vars.SYNC_DRY_RUN === 'true';
+  get('strava-enabled').checked = vars.STRAVA_SYNC_ENABLED === 'true';
+  get('sync-pages').value = 'DEFAULT';
+  get('reconcile-recent').value = 'DEFAULT';
+  get('sync-targets').value = 'DEFAULT';
+  get('reconcile-targets').value = 'DEFAULT';
+  updateTargetSummary();
   get('product-id').value = vars.GARMIN_DEVICE_PRODUCT_ID || '';
   get('product-preset').value = ['3122', '4440', '3843', '4062', '4061'].includes(vars.GARMIN_DEVICE_PRODUCT_ID) ? vars.GARMIN_DEVICE_PRODUCT_ID : 'custom';
   get('software-version').value = vars.GARMIN_DEVICE_SOFTWARE_VERSION || '';
@@ -224,6 +257,7 @@ function applySnapshot(snapshot) {
   get('connection-pill').classList.add('connected');
   get('connection-pill').querySelector('.pill-label').textContent = '已连接私有仓库';
   credentialSummary();
+  dashboard?.update();
 }
 
 async function refreshRepository({ quiet = false } = {}) {
@@ -234,7 +268,7 @@ async function refreshRepository({ quiet = false } = {}) {
 }
 
 async function connect() {
-  if (state.busy) return;
+  if (state.busy || dashboard?.isDemo()) return;
   const token = get('github-token').value;
   const owner = get('github-owner').value;
   const repo = get('github-repo').value;
@@ -247,6 +281,7 @@ async function connect() {
     applySnapshot(snapshot);
     get('github-token').value = '';
     toast('已连接到私有仓库。Token 仅保留在本页内存中。');
+    try { await loadRuns(); } catch { /* A report read failure does not undo connection. */ }
   } catch (error) {
     const message = errorMessage(error);
     setText('connection-status', message);
@@ -261,6 +296,8 @@ function disconnect() {
   state.snapshot = { secrets: [], variables: {}, installed: false };
   get('github-token').value = '';
   get('onelap-account').value = '';
+  for (const id of ['strava-client-id', 'strava-client-secret', 'strava-refresh-token', 'strava-session-key']) get(id).value = '';
+  get('strava-enabled').checked = false;
   get('onelap-password').value = '';
   get('onelap-token').value = '';
   get('session-key').value = '';
@@ -280,9 +317,11 @@ function disconnect() {
   setText('schedule-value', '自动同步未开启');
   setText('credential-status', '连接已断开；本页输入的凭据已清空。');
   setText('oauth-cleanup-status', '连接仓库后可检查。');
+  setText('default-target-status', '默认按已配置账号自动判断；中国区和国际区可以独立使用。');
   get('credential-list').replaceChildren();
   setBadge('install', '等待连接'); setBadge('settings', '等待连接'); setBadge('run', '等待连接');
   renderRuns([]);
+  dashboard?.reset();
   setBusy(false);
   toast('已断开连接，并清除了本页中的凭据输入。');
 }
@@ -304,17 +343,50 @@ async function installRunner() {
 async function saveSettings() {
   await runTask('正在验证并加密保存设置…', async () => {
     if (!state.snapshot.installed) throw new Error('请先安装同步程序，再保存设置。');
-    const update = buildSettings(collectSettings(), state.snapshot);
+    const update = adaptSettingsForRunner(buildSettings(collectSettings(), state.snapshot), state.snapshot.manifest);
+    const legacyAuto = update.variables.SYNC_TARGETS === 'AUTO'
+      && !state.snapshot.manifest?.features?.includes('default-sync-targets');
+    if (legacyAuto) {
+      update.variables.SYNC_TARGETS = requireSyncTargets('AUTO', [
+        ...state.snapshot.secrets, ...Object.keys(update.secrets),
+      ]);
+    }
     const result = await state.client.saveSettings(update, (progress) => setText('activity-status', progress));
+    dashboard?.invalidateValidation();
+    get('onelap-account').value = '';
+    for (const id of ['strava-client-id', 'strava-client-secret', 'strava-refresh-token', 'strava-session-key']) get(id).value = '';
     get('onelap-password').value = '';
     get('onelap-token').value = '';
     get('session-key').value = '';
     get('garmin-cn-session').value = '';
     get('garmin-global-session').value = '';
     await refreshRepository({ quiet: true });
-    setText('settings-status', `已保存 ${result.saved.length} 项设置。凭据输入已从本页清除。`);
+    setText('settings-status', legacyAuto
+      ? `已保存 ${result.saved.length} 项设置。当前私有仓库为旧版同步程序，自动判断已按现有会话保存为固定区域；更新同步程序后才能动态判断。`
+      : `已保存 ${result.saved.length} 项设置。凭据输入已从本页清除。`);
     toast('设置已保存到 GitHub Actions。');
   });
+}
+
+function updateTargetSummary() {
+  const strategy = state.snapshot.variables.SYNC_TARGETS || 'AUTO';
+  const targets = resolveSyncTargets(strategy, state.snapshot.secrets);
+  const label = { CN: '仅中国区', GLOBAL: '仅国际区', 'CN,GLOBAL': '中国区 + 国际区' }[targets];
+  setText('default-target-status', label
+    ? `已保存的默认同步：${label}${strategy === 'AUTO' ? '（按已配置账号自动判断）' : ''}。未选择的区域无需配置。`
+    : '默认按已配置账号自动判断；请至少配置一个区域的完整会话。');
+}
+
+function selectedRunTargets(id) {
+  const selection = get(id).value;
+  const strategy = selection === 'DEFAULT' ? state.snapshot.variables.SYNC_TARGETS || 'AUTO' : selection;
+  return requireSyncTargets(strategy, state.snapshot.secrets);
+}
+
+function selectedRunLimit(id, variable, fallback) {
+  const value = get(id).value;
+  if (value !== 'DEFAULT' || state.snapshot.manifest?.features?.includes('shared-run-settings')) return value;
+  return state.snapshot.variables[variable] || fallback;
 }
 
 function syncInputs() {
@@ -322,8 +394,8 @@ function syncInputs() {
   const force = get('sync-force').checked;
   if (force && !recordId) throw new Error('重新上传必须填写活动编号。');
   return {
-    target_regions: get('sync-targets').value,
-    discovery_pages: get('sync-pages').value,
+    target_regions: selectedRunTargets('sync-targets'),
+    discovery_pages: selectedRunLimit('sync-pages', 'ONELAP_DISCOVERY_PAGES', '10'),
     full_scan: get('sync-full-scan').checked,
     retry_auth: get('sync-retry-auth').checked,
     record_id: recordId,
@@ -338,9 +410,8 @@ async function dispatchSync(validation = false) {
     if (!state.snapshot.installed) throw new Error('请先安装同步程序，再运行任务。');
     const inputs = syncInputs();
     if (validation) { inputs.dry_run = true; inputs.discovery_pages = '1'; inputs.full_scan = false; inputs.force_reupload = false; inputs.record_id = ''; inputs.request_id = requestId('validate'); }
-    if (!validation && inputs.force_reupload && !inputs.dry_run
-      && !window.confirm('确认重新上传这个指定活动？如果 Garmin 中仍有原活动，可能产生重复记录。')) {
-      setText('run-status', '已取消重新上传，本次没有提交 GitHub Actions。');
+    if (!validation && inputs.force_reupload && !await dashboard.confirmForce(inputs)) {
+      setText('run-status', '已取消重新上传，本次没有提交任务。');
       return;
     }
     await state.client.dispatchWorkflow('sync.yml', inputs);
@@ -353,9 +424,11 @@ async function dispatchSync(validation = false) {
 async function dispatchReconcile() {
   await runTask('正在提交核对任务…', async () => {
     if (!state.snapshot.installed) throw new Error('请先安装同步程序，再运行任务。');
+    if (!get('reconcile-dry-run').checked && state.snapshot.variables.SYNC_DRY_RUN !== 'true'
+      && !window.confirm('核对后将对明确缺失的 Garmin 目标补传。未能核实和匹配歧义不会补传。确认继续？')) return;
     await state.client.dispatchWorkflow('reconcile.yml', {
-      target_regions: get('reconcile-targets').value,
-      recent_activities: get('reconcile-recent').value,
+      target_regions: selectedRunTargets('reconcile-targets'),
+      recent_activities: selectedRunLimit('reconcile-recent', 'RECONCILE_RECENT_LIMIT', '20'),
       dry_run: get('reconcile-dry-run').checked,
       request_id: requestId('reconcile'),
     });
@@ -369,6 +442,7 @@ async function saveSchedule() {
   await runTask('正在更新自动同步开关…', async () => {
     if (!state.snapshot.installed) throw new Error('请先安装同步程序，再调整自动同步。');
     const enabled = get('schedule-enabled').checked;
+    if (enabled) requireSyncTargets(state.snapshot.variables.SYNC_TARGETS || 'AUTO', state.snapshot.secrets);
     await state.client.setScheduleEnabled(enabled);
     await refreshRepository({ quiet: true });
     setText('schedule-status', enabled ? '自动同步已开启：每小时第 7 和 37 分钟触发。' : '自动同步已关闭。');
@@ -415,13 +489,23 @@ async function refreshRuns({ quiet = false } = {}) {
 }
 
 async function loadRuns() {
-  const runs = await state.client.listRuns();
-  renderRuns(runs);
-  setText('run-status', runs.length ? `已加载最近 ${runs.length} 条运行记录。` : '暂未找到同步工作流运行记录。');
+  const client = state.client;
+  if (!client) return;
+  const results = await Promise.allSettled([client.listRuns(), client.readWebReport()]);
+  if (client !== state.client) return;
+  if (results[0].status === 'fulfilled') {
+    const runs = results[0].value;
+    renderRuns(runs);
+    dashboard?.setRuns(runs);
+    setText('run-status', runs.length ? `已加载最近 ${runs.length} 条运行记录。` : '暂未找到同步工作流运行记录。');
+  }
+  if (results[1].status === 'fulfilled') dashboard?.setReport(results[1].value);
+  else dashboard?.setReport(null, results[1].reason?.message || '读取失败，请稍后重试。');
+  if (results[0].status === 'rejected') throw results[0].reason;
 }
 
 async function pollRuns() {
-  if (!state.client || state.busy || state.polling || document.visibilityState !== 'visible') return;
+  if (!state.client || dashboard?.isDemo() || state.busy || state.polling || document.visibilityState !== 'visible') return;
   state.polling = true;
   try { await loadRuns(); } catch { /* Background polling never interrupts an active workflow. */ }
   finally { state.polling = false; }
@@ -595,14 +679,14 @@ function buildInterface() {
     element('div', { class: 'actions-row' }, [button('安装同步程序', { variant: 'primary', icon: 'download', onClick: installRunner, disabled: true }), element('span', { class: 'status-message', id: 'install-status', text: '连接仓库后可检查安装状态。' })]),
   ];
 
-  const cnInput = makeField({ id: 'garmin-cn-session', label: 'Garmin 中国区会话 JSON', rows: 4, placeholder: '导入 Garmin 中国区 session JSON…', help: '只在保存时加密发送到 GitHub Secret；空白表示保留仓库中已有会话。' });
+  const cnInput = makeField({ id: 'garmin-cn-session', label: 'Garmin 中国区会话 JSON', rows: 4, placeholder: '导入 Garmin 中国区 session JSON…', help: '仅启用该区域时需要。未启用可留空；已保存的会话不会被删除。' });
   const cnFile = element('input', { class: 'file-input', type: 'file', accept: 'application/json,.json', 'aria-label': '导入 Garmin 中国区会话文件' });
   cnFile.addEventListener('change', () => importSession(cnFile, cnInput.querySelector('textarea')));
   cnInput.append(cnFile, element('div', { class: 'oauth-field-actions' }, [
     button('自动获取', { variant: 'subtle', icon: 'key', onClick: () => openGarminOAuthDialog('CN'), disabled: true }),
     element('span', { class: 'session-status', id: 'garmin-cn-oauth-status', text: '可使用 Garmin 中国区账号登录。' }),
   ]));
-  const globalInput = makeField({ id: 'garmin-global-session', label: 'Garmin 国际区会话 JSON', rows: 4, placeholder: '导入 Garmin 国际区 session JSON…', help: '只在保存时加密发送到 GitHub Secret；空白表示保留仓库中已有会话。' });
+  const globalInput = makeField({ id: 'garmin-global-session', label: 'Garmin 国际区会话 JSON', rows: 4, placeholder: '导入 Garmin 国际区 session JSON…', help: '仅启用该区域时需要。未启用可留空；已保存的会话不会被删除。' });
   const globalFile = element('input', { class: 'file-input', type: 'file', accept: 'application/json,.json', 'aria-label': '导入 Garmin 国际区会话文件' });
   globalFile.addEventListener('change', () => importSession(globalFile, globalInput.querySelector('textarea')));
   globalInput.append(globalFile, element('div', { class: 'oauth-field-actions' }, [
@@ -638,7 +722,11 @@ function buildInterface() {
       makeField({ id: 'onelap-account', label: '顽鹿账号', placeholder: '账号或手机号', help: '可与密码搭配，或改用下方 Token。已保存凭据可留空。' }),
       makeField({ id: 'onelap-password', label: '顽鹿密码', type: 'password', placeholder: '仅本页内存', help: '保存完成后会从本页清除。', autocomplete: 'new-password' }),
       makeField({ id: 'onelap-token', label: '顽鹿 Token（可选）', type: 'password', placeholder: '优先于账号密码', help: '可替代账号密码；不会回显或持久保存到网页。', autocomplete: 'off' }),
-      makeField({ id: 'settings-targets', label: '同步目标区域', options: [{ value: 'CN,GLOBAL', label: '中国区 + 国际区' }, { value: 'CN', label: '仅中国区' }, { value: 'GLOBAL', label: '仅国际区' }], help: '所选每个区域都需要对应完整 Garmin 会话。' }),
+      makeField({ id: 'settings-targets', label: '默认同步区域', value: 'AUTO', options: [{ value: 'AUTO', label: '按已配置账号自动判断' }, { value: 'GLOBAL', label: '仅国际区' }, { value: 'CN', label: '仅中国区' }, { value: 'CN,GLOBAL', label: '中国区 + 国际区' }], help: '保存后用于自动同步和默认手动任务。只用国际区时选“仅国际区”，中国区会话可留空；修改后请保存。' }),
+      makeField({ id: 'default-pages', label: '默认发现页数', type: 'number', value: '10', help: '0–100；0 表示不限页数。用于自动同步和默认手动任务。' }),
+      makeField({ id: 'default-recent', label: '默认核对条数', type: 'number', value: '20', help: '1–200；核对按时间从新到旧选择活动。' }),
+      makeField({ id: 'max-retries', label: '最大重试次数', type: 'number', value: '8', help: '1–100；修复登录后可勾选“重试登录失败”。' }),
+      element('div', { class: 'field' }, [checkField('global-dry-run', '全局仅验证', '开启后手动和定时任务都只验证；单次任务无法关闭此设置。')]),
       cnInput, globalInput,
       makeField({ id: 'unit-id', label: 'Garmin 设备 Unit ID', type: 'number', placeholder: '1000000000 - 4294967295', help: '使用自己真实设备的 Unit ID。该值作为 Secret 加密保存。', required: true, autocomplete: 'off' }),
       productPreset, productField,
@@ -646,6 +734,19 @@ function buildInterface() {
       element('div', { class: 'field' }, [checkField('coordinate-transform', '启用轨迹坐标纠正', '将中国区 GCJ-02 轨迹转为 WGS84 后写入 FIT 文件。')]),
       makeField({ id: 'session-key', label: '顽鹿会话加密密钥（可选）', type: 'password', placeholder: '留空时首次保存自动生成', help: '至少 32 字节。仅当你需要自备密钥时填写。', autocomplete: 'off' }),
     ]),
+    element('details', { class: 'session-help' }, [
+      element('summary', { text: 'Strava 同步（可选）' }),
+      checkField('strava-enabled', '同时同步到 Strava', '默认关闭。上传前批量核对已有活动；读取授权不足时保留待确认任务，并继续 Garmin 同步。'),
+      element('p', { text: '先在本机副本中运行 python -m onelap_garmin_sync.strava_auth，完成 activity:read_all 和 activity:write 授权，再填写以下值。该命令在 runner 目录执行；已安装到私有仓库的副本则在根目录执行。' }),
+      element('div', { class: 'form-grid' }, [
+        makeField({ id: 'strava-client-id', label: 'Strava Client ID', type: 'password', help: '已保存时留空。' }),
+        makeField({ id: 'strava-client-secret', label: 'Strava Client Secret', type: 'password', help: '通过 GitHub 公钥加密后保存。' }),
+        makeField({ id: 'strava-refresh-token', label: 'Strava Refresh Token', type: 'password', help: '重新授权时仅替换此值，保留原会话密钥和台账。' }),
+        makeField({ id: 'strava-session-key', label: 'Strava 会话加密密钥（可选）', type: 'password', help: '至少 32 字节；首次开启自动生成，已保存时留空。' }),
+      ]),
+      element('p', { text: '“核对并补同步”继续只处理 Garmin 区域；Strava 的批量核对在同步任务中执行。旧版私有仓库需先更新同步程序。' }),
+    ]),
+    element('p', { class: 'session-status', id: 'default-target-status' , text: '默认按已配置账号自动判断；中国区和国际区可以独立使用。' }),
     element('div', { class: 'check-panel' }, [element('strong', { text: '已保存凭据状态' }), element('p', { class: 'session-status', id: 'credential-status', text: '连接仓库后读取 Secret 名称，不读取 Secret 内容。' }), element('div', { class: 'secret-list', id: 'credential-list' })]),
     element('div', { class: 'actions-row' }, [button('加密保存设置', { variant: 'primary', icon: 'lock', onClick: saveSettings, disabled: true }), button('验证已保存配置', { variant: 'subtle', icon: 'shield', onClick: () => dispatchSync(true), disabled: true }), button('清理授权临时数据', { variant: 'ghost', icon: 'trash', onClick: cleanupGarminOAuth, disabled: true }), element('span', { class: 'status-message', id: 'settings-status', text: '请先保存设置，再验证已写入 GitHub Secrets 与 Variables 的配置。空白 Secret 字段会保留现有值。' })]),
     element('p', { class: 'session-status', id: 'oauth-cleanup-status', text: '连接仓库后可检查。' }),
@@ -656,8 +757,8 @@ function buildInterface() {
       element('section', { class: 'session-card', 'aria-labelledby': 'sync-title' }, [
         element('div', { class: 'session-title' }, [element('span', { id: 'sync-title', text: '手动同步' }), element('span', { class: 'badge', text: 'sync.yml' })]),
         element('p', { text: '按设置发现活动，可选择只验证或上传。' }),
-        makeField({ id: 'sync-targets', label: '目标区域', options: [{ value: 'CN,GLOBAL', label: '中国区 + 国际区' }, { value: 'CN', label: '仅中国区' }, { value: 'GLOBAL', label: '仅国际区' }] }),
-        makeField({ id: 'sync-pages', label: '发现页数', value: '1', options: [{ value: '1', label: '1 页（最多 20 条）' }, { value: '3', label: '3 页' }, { value: '10', label: '10 页' }, { value: '20', label: '20 页' }, { value: '50', label: '50 页' }, { value: '100', label: '100 页' }, { value: '0', label: '不限页数' }] }),
+        makeField({ id: 'sync-targets', label: '目标区域', value: 'DEFAULT', options: [{ value: 'DEFAULT', label: '使用已保存的默认设置' }, { value: 'GLOBAL', label: '仅国际区（仅本次）' }, { value: 'CN', label: '仅中国区（仅本次）' }, { value: 'CN,GLOBAL', label: '双区（仅本次）' }] }),
+        makeField({ id: 'sync-pages', label: '发现页数', value: 'DEFAULT', options: [{ value: 'DEFAULT', label: '使用已保存的默认页数' }, { value: '1', label: '1 页（最多 20 条）' }, { value: '3', label: '3 页' }, { value: '10', label: '10 页' }, { value: '20', label: '20 页' }, { value: '50', label: '50 页' }, { value: '100', label: '100 页' }, { value: '0', label: '不限页数' }] }),
         makeField({ id: 'sync-record-id', label: '指定活动编号（可选）', placeholder: '只处理此活动', help: '重新上传时必须填写。' }),
         element('div', { class: 'divider' }),
         checkField('sync-dry-run', '仅验证与转换，不上传', '建议首次使用时保持开启。', true),
@@ -669,8 +770,8 @@ function buildInterface() {
       element('section', { class: 'session-card', 'aria-labelledby': 'reconcile-title' }, [
         element('div', { class: 'session-title' }, [element('span', { id: 'reconcile-title', text: '核对并补同步' }), element('span', { class: 'badge', text: 'reconcile.yml' })]),
         element('p', { text: '核对最近活动与 Garmin 台账，并按需要补同步。' }),
-        makeField({ id: 'reconcile-targets', label: '核对区域', options: [{ value: 'CN,GLOBAL', label: '中国区 + 国际区' }, { value: 'CN', label: '仅中国区' }, { value: 'GLOBAL', label: '仅国际区' }] }),
-        makeField({ id: 'reconcile-recent', label: '最近活动数量', value: '20', options: [{ value: '1', label: '1 条' }, { value: '10', label: '10 条' }, { value: '20', label: '20 条' }, { value: '50', label: '50 条' }, { value: '100', label: '100 条' }, { value: '200', label: '200 条' }] }),
+        makeField({ id: 'reconcile-targets', label: '核对区域', value: 'DEFAULT', options: [{ value: 'DEFAULT', label: '使用已保存的默认设置' }, { value: 'GLOBAL', label: '仅国际区（仅本次）' }, { value: 'CN', label: '仅中国区（仅本次）' }, { value: 'CN,GLOBAL', label: '双区（仅本次）' }] }),
+        makeField({ id: 'reconcile-recent', label: '最近活动数量', value: 'DEFAULT', options: [{ value: 'DEFAULT', label: '使用已保存的默认条数' }, { value: '1', label: '1 条' }, { value: '10', label: '10 条' }, { value: '20', label: '20 条' }, { value: '50', label: '50 条' }, { value: '100', label: '100 条' }, { value: '200', label: '200 条' }] }),
         element('div', { class: 'divider' }),
         checkField('reconcile-dry-run', '仅核对，不补传', '开启时只记录核对结果。', true),
         element('div', { class: 'actions-row' }, [button('提交核对', { variant: 'subtle', icon: 'refresh', onClick: dispatchReconcile, disabled: true })]),
@@ -754,6 +855,9 @@ function buildInterface() {
       for (const item of document.querySelectorAll('.nav-item')) item.classList.toggle('active', item === link);
     });
   }
+  dashboard = mountDashboard({ app, state, element, icon, button, notice, get, toast, actions: {
+    dispatchSync, dispatchReconcile, refresh: () => runTask('正在刷新仓库与活动报告…', async () => { await refreshRepository({ quiet: true }); await loadRuns(); }),
+  } });
   setBusy(false);
 }
 

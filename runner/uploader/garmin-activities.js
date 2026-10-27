@@ -102,32 +102,85 @@ function normalizeActivity(activity) {
   };
 }
 
+const STAGE_NAMES = {
+  load_token: "加载授权",
+  user_profile: "读取用户资料",
+  activities: "查询活动列表",
+};
+
+async function runStage(stage, action, report, details = {}) {
+  const started = Date.now();
+  report({ stage, status: "started", ...details });
+  try {
+    const result = await action();
+    report({
+      stage,
+      status: "completed",
+      ...details,
+      elapsedMs: Date.now() - started,
+      ...(Array.isArray(result) ? { count: result.length } : {}),
+    });
+    return result;
+  } catch (error) {
+    const httpStatus = error && error.response && error.response.status;
+    const code = error && error.code;
+    report({
+      stage,
+      status: "failed",
+      ...details,
+      elapsedMs: Date.now() - started,
+      ...(Number.isInteger(httpStatus) ? { httpStatus } : {}),
+      ...(typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code)
+        ? { code }
+        : {}),
+    });
+    throw error;
+  }
+}
+
+async function readActivities(client, oauth1, oauth2, startDate, endDate, report) {
+  await runStage("load_token", () => client.loadToken(oauth1, oauth2), report);
+  await runStage("user_profile", () => client.getUserProfile(), report);
+  return fetchActivities(
+    client, startDate, endDate, PAGE_SIZE, MAX_ACTIVITIES, report,
+  );
+}
+
 async function fetchActivities(
   client,
   startDate,
   endDate,
   pageSize = PAGE_SIZE,
   maximum = MAX_ACTIVITIES,
+  report = () => {},
 ) {
   const activities = [];
   let start = 0;
   let truncated = false;
   while (activities.length < maximum) {
     const limit = Math.min(pageSize, maximum - activities.length);
-    const page = await client.getActivities(
-      start,
-      limit,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      startDate,
-      endDate,
+    const page = await runStage(
+      "activities",
+      async () => {
+        const result = await client.getActivities(
+          start,
+          limit,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          startDate,
+          endDate,
+        );
+        if (!Array.isArray(result)) {
+          throw new Error("Garmin 活动列表返回的不是数组");
+        }
+        return result;
+      },
+      report,
+      { start, limit },
     );
-    if (!Array.isArray(page)) {
-      throw new Error("Garmin 活动列表返回的不是数组");
-    }
     activities.push(...page.map(normalizeActivity));
     if (page.length < limit) {
       break;
@@ -169,13 +222,23 @@ async function main() {
       ? new GarminConnect(credentials, "garmin.cn")
       : new GarminConnect(credentials);
 
+  let failedStage;
+  const report = (event) => {
+    if (event.status === "failed") {
+      failedStage = event.stage;
+    }
+    process.stdout.write(
+      `${JSON.stringify({ type: "garmin-activities-stage", region, ...event })}\n`,
+    );
+  };
   try {
-    await client.loadToken(oauth1, oauth2);
-    await client.getUserProfile();
-    const result = await fetchActivities(
+    const result = await readActivities(
       client,
+      oauth1,
+      oauth2,
       args["start-date"],
       args["end-date"],
+      report,
     );
     emit({
       ok: !result.truncated,
@@ -194,7 +257,7 @@ async function main() {
       region,
       activities: [],
       truncated: false,
-      message: errorText(error),
+      message: `${STAGE_NAMES[failedStage] || "准备核对"}失败：${errorText(error)}`,
     });
     process.exitCode = 1;
   }
@@ -214,6 +277,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  readActivities,
   fetchActivities,
   normalizeActivity,
 };

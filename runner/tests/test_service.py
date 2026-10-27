@@ -2,6 +2,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -163,6 +164,26 @@ def add_activity(ledger, settings):
 
 
 class ServiceTest(unittest.TestCase):
+    def test_switching_to_international_ignores_existing_china_pending_uploads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = make_settings(root)
+            original.prepare_directories()
+            garmin = FakeGarmin(raising_regions=("CN",))
+            ledger = Ledger(original.database_path)
+            try:
+                activity = add_activity(ledger, original)
+                service = SyncService(replace(original, targets=("GLOBAL",)), ledger, FakeOneLap(), garmin)
+                service._process_activity(activity, retry_auth=False)
+                statuses = {
+                    row["target_region"]: row["status"]
+                    for row in ledger.connection.execute("SELECT target_region, status FROM uploads")
+                }
+            finally:
+                ledger.close()
+            self.assertEqual([region for region, _ in garmin.uploads], ["GLOBAL"])
+            self.assertEqual(statuses, {"CN": "pending", "GLOBAL": "success"})
+
     def test_reconcile_repairs_all_confirmed_missing_activities(self):
         sources = [
             {

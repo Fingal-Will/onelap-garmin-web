@@ -1,3 +1,4 @@
+import { normalizeReport } from './dashboard-model.js';
 import { authorizeGarmin as runGarminOAuth } from './oauth.js';
 
 const API = 'https://api.github.com';
@@ -9,10 +10,12 @@ const SECRET_NAMES = new Set([
   'ONELAP_ACCOUNT', 'ONELAP_PASSWORD', 'ONELAP_TOKEN', 'ONELAP_SESSION_KEY',
   'GARMIN_CN_OAUTH1', 'GARMIN_CN_OAUTH2', 'GARMIN_GLOBAL_OAUTH1', 'GARMIN_GLOBAL_OAUTH2',
   'GARMIN_DEVICE_UNIT_ID',
+  'STRAVA_CLIENT_ID', 'STRAVA_CLIENT_SECRET', 'STRAVA_REFRESH_TOKEN', 'STRAVA_SESSION_KEY',
 ]);
 const VARIABLE_NAMES = new Set([
   'GARMINIZE_FIT_ENABLED', 'FIT_COORDINATE_TRANSFORM_ENABLED', 'GARMIN_DEVICE_PRODUCT_ID',
   'GARMIN_DEVICE_SOFTWARE_VERSION', 'SYNC_TARGETS', 'SYNC_ENABLED',
+  'STRAVA_SYNC_ENABLED', 'ONELAP_DISCOVERY_PAGES', 'RECONCILE_RECENT_LIMIT', 'SYNC_MAX_RETRIES', 'SYNC_DRY_RUN',
 ]);
 const MAX_SECRET_BYTES = 48 * 1024;
 const MAX_VARIABLE_BYTES = 48 * 1024;
@@ -137,9 +140,17 @@ function validateVariable(name, value) {
     GARMINIZE_FIT_ENABLED: new Set(['true', 'false']),
     FIT_COORDINATE_TRANSFORM_ENABLED: new Set(['true', 'false']),
     SYNC_ENABLED: new Set(['true', 'false']),
-    SYNC_TARGETS: new Set(['CN', 'GLOBAL', 'CN,GLOBAL']),
+    STRAVA_SYNC_ENABLED: new Set(['true', 'false']),
+    SYNC_DRY_RUN: new Set(['true', 'false']),
+    SYNC_TARGETS: new Set(['AUTO', 'CN', 'GLOBAL', 'CN,GLOBAL']),
   };
   if (values[name] && !values[name].has(value)) throw new Error(`${name} 的值无效。`);
+  for (const [key, minimum, maximum] of [
+    ['ONELAP_DISCOVERY_PAGES', 0, 100], ['RECONCILE_RECENT_LIMIT', 1, 200], ['SYNC_MAX_RETRIES', 1, 100],
+  ]) {
+    if (name === key && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))
+      || Number(value) < minimum || Number(value) > maximum)) throw new Error(`${name} 的值无效。`);
+  }
   const asUint16 = /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) <= 65535;
   if (name === 'GARMIN_DEVICE_PRODUCT_ID' && (!asUint16 || Number(value) < 1)) {
     throw new Error('GARMIN_DEVICE_PRODUCT_ID 的值无效。');
@@ -177,7 +188,7 @@ function validateWorkflowInputs(workflow, inputs) {
     }
   }
   if (workflow === 'sync.yml') {
-    if (normalized.discovery_pages !== undefined && !['0', '1', '3', '10', '20', '50', '100'].includes(normalized.discovery_pages)) {
+    if (normalized.discovery_pages !== undefined && !['DEFAULT', '0', '1', '3', '10', '20', '50', '100'].includes(normalized.discovery_pages)) {
       throw new Error('discovery_pages 的值无效。');
     }
     if (normalized.record_id !== undefined && normalized.record_id !== '' && !/^[A-Za-z0-9_-]{1,128}$/.test(normalized.record_id)) {
@@ -186,7 +197,7 @@ function validateWorkflowInputs(workflow, inputs) {
     if (normalized.force_reupload === 'true' && !normalized.record_id) {
       throw new Error('重新上传前必须填写活动编号。');
     }
-  } else if (normalized.recent_activities !== undefined && !['1', '10', '20', '50', '100', '200'].includes(normalized.recent_activities)) {
+  } else if (normalized.recent_activities !== undefined && !['DEFAULT', '1', '10', '20', '50', '100', '200'].includes(normalized.recent_activities)) {
     throw new Error('recent_activities 的值无效。');
   }
   if (normalized.request_id !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(normalized.request_id)) {
@@ -691,6 +702,34 @@ export class GitHubClient {
     return results.flatMap((result) => result.value)
       .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))
       .slice(0, 20);
+  }
+
+  async readWebReport() {
+    const repository = await this.#repository();
+    let response;
+    try {
+      response = await this.#request(`/contents/data/web-status.json?ref=${encodeURIComponent(repository.default_branch)}`);
+    } catch (error) {
+      if (error.status === 404) return null;
+      throw error;
+    }
+    if (!isObject(response) || response.encoding !== 'base64' || response.size > 950_000 || typeof response.content !== 'string' || response.content.length > 1_400_000) {
+      throw new Error('私有活动报告超出大小限制或编码不受支持。');
+    }
+    try { return normalizeReport(JSON.parse(decodeBase64(response.content))); }
+    catch { throw new Error('私有活动报告格式不受支持，请更新同步程序并重新运行。'); }
+  }
+
+  async getRunJobs(runId) {
+    if (!/^\d{1,20}$/.test(String(runId))) throw new Error('运行编号无效。');
+    await this.#repository();
+    // A single page is sufficient for our one-job workflows. Do not infer persistence if absent.
+    const response = await this.#request(`/actions/runs/${runId}/jobs?per_page=100&filter=latest`);
+    if (!Array.isArray(response.jobs)) throw new Error('无法读取运行阶段。');
+    return response.jobs.map(job => ({ steps: (Array.isArray(job.steps) ? job.steps : []).map(step => ({
+      name: String(step.name || '').slice(0, 200), status: step.status, conclusion: step.conclusion,
+      started_at: step.started_at, completed_at: step.completed_at,
+    })) }));
   }
 
   async setScheduleEnabled(enabled) {

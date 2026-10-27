@@ -5,17 +5,17 @@ on:
   workflow_dispatch:
     inputs:
       target_regions:
-        description: 同步区域（CN 中国区，GLOBAL 国际区）
+        description: 区域（DEFAULT 使用已保存设置，AUTO 按已配置账号判断）
         type: choice
         required: true
-        default: CN,GLOBAL
-        options: ["CN,GLOBAL", "CN", "GLOBAL"]
+        default: DEFAULT
+        options: ["DEFAULT", "GLOBAL", "CN", "CN,GLOBAL", "AUTO"]
       discovery_pages:
         description: 活动发现页数（每页最多 20 条，0 表示不限）
         type: choice
         required: true
-        default: "1"
-        options: ["1", "3", "10", "20", "50", "100", "0"]
+        default: "DEFAULT"
+        options: ["DEFAULT", "1", "3", "10", "20", "50", "100", "0"]
       full_scan:
         description: 从第一页扫描全部历史
         type: boolean
@@ -33,7 +33,7 @@ on:
         type: boolean
         default: false
       dry_run:
-        description: 仅验证和转换，不上传至佳明
+        description: 仅验证和转换，不上传至 Garmin 或 Strava
         type: boolean
         default: true
       request_id:
@@ -61,13 +61,17 @@ jobs:
         shell: bash
     env:
       WEB_WORKFLOW: sync
+      STRAVA_SYNC_ENABLED: ${{ vars.STRAVA_SYNC_ENABLED || 'false' }}
       GARMIN_DEVICE_PRODUCT_ID: ${{ vars.GARMIN_DEVICE_PRODUCT_ID }}
       GARMIN_DEVICE_SOFTWARE_VERSION: ${{ vars.GARMIN_DEVICE_SOFTWARE_VERSION }}
       GARMINIZE_FIT_ENABLED: ${{ vars.GARMINIZE_FIT_ENABLED }}
       FIT_COORDINATE_TRANSFORM_ENABLED: ${{ vars.FIT_COORDINATE_TRANSFORM_ENABLED }}
       SCHEDULE_ENABLED: ${{ vars.SYNC_ENABLED }}
-      SCHEDULE_TARGETS: ${{ vars.SYNC_TARGETS || 'CN,GLOBAL' }}
-      SYNC_MAX_RETRIES: "8"
+      DEFAULT_TARGETS: ${{ vars.SYNC_TARGETS || 'AUTO' }}
+      SYNC_MAX_RETRIES: ${{ vars.SYNC_MAX_RETRIES || '8' }}
+      DEFAULT_DISCOVERY_PAGES: ${{ vars.ONELAP_DISCOVERY_PAGES || '10' }}
+      DEFAULT_RECENT_LIMIT: ${{ vars.RECONCILE_RECENT_LIMIT || '20' }}
+      DEFAULT_DRY_RUN: ${{ vars.SYNC_DRY_RUN || 'false' }}
       SYNC_DATA_DIR: data
       SYNC_DRY_RUN: "true"
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -93,6 +97,11 @@ jobs:
           persist-credentials: false
 
       - name: 准备并验证请求
+        env:
+          GARMIN_CN_OAUTH1: ${{ secrets.GARMIN_CN_OAUTH1 }}
+          GARMIN_CN_OAUTH2: ${{ secrets.GARMIN_CN_OAUTH2 }}
+          GARMIN_GLOBAL_OAUTH1: ${{ secrets.GARMIN_GLOBAL_OAUTH1 }}
+          GARMIN_GLOBAL_OAUTH2: ${{ secrets.GARMIN_GLOBAL_OAUTH2 }}
         run: python3 scripts/prepare_request.py
 
       - name: 配置 Python
@@ -134,6 +143,10 @@ jobs:
           GARMIN_GLOBAL_OAUTH1: ${{ secrets.GARMIN_GLOBAL_OAUTH1 }}
           GARMIN_GLOBAL_OAUTH2: ${{ secrets.GARMIN_GLOBAL_OAUTH2 }}
           GARMIN_DEVICE_UNIT_ID: ${{ secrets.GARMIN_DEVICE_UNIT_ID }}
+          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+          STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
+          STRAVA_SESSION_KEY: ${{ secrets.STRAVA_SESSION_KEY }}
         run: |
           args=()
           [[ "$MANUAL_FULL_SCAN" != "true" ]] || args+=(--full-scan)

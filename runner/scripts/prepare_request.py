@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from onelap_garmin_sync.config import parse_bool, resolve_sync_targets
+from onelap_garmin_sync.workflow_settings import nonnegative_integer
 
 
 def boolean(value: object, name: str, default: bool = False) -> str:
@@ -45,13 +50,20 @@ def prepare(event: dict, event_name: str, workflow: str, env: dict) -> dict[str,
         if workflow != "sync" or env.get("SCHEDULE_ENABLED") != "true":
             raise ValueError("定时同步未开启")
         inputs = {}
-        targets = env.get("SCHEDULE_TARGETS") or "CN,GLOBAL"
+        targets = env.get("DEFAULT_TARGETS") or "AUTO"
     elif event_name == "workflow_dispatch":
         inputs = event.get("inputs") or {}
-        targets = inputs.get("target_regions", "CN,GLOBAL")
+        targets = inputs.get("target_regions") or "DEFAULT"
+        targets = choice(targets, {"DEFAULT", "AUTO", "CN", "GLOBAL", "CN,GLOBAL"}, "同步区域")
+        if targets == "DEFAULT":
+            targets = env.get("DEFAULT_TARGETS") or "AUTO"
     else:
         raise ValueError("只允许网页手动运行或已开启的定时任务")
-    targets = choice(targets, {"CN", "GLOBAL", "CN,GLOBAL"}, "同步区域")
+    targets = choice(targets, {"AUTO", "CN", "GLOBAL", "CN,GLOBAL"}, "默认同步区域")
+    resolved = resolve_sync_targets(targets, env)
+    if not resolved:
+        raise ValueError("请至少配置一个 Garmin 区域的完整 OAuth 会话，或把默认同步区域设为已配置区域")
+    targets = ",".join(resolved)
     request_id = inputs.get("request_id", "")
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{0,80}", request_id):
         raise ValueError("request_id 必须为最多 80 个英文字母、数字、短横线或下划线")
@@ -61,11 +73,24 @@ def prepare(event: dict, event_name: str, workflow: str, env: dict) -> dict[str,
     force = boolean(inputs.get("force_reupload"), "force_reupload")
     if force == "true" and not record_id:
         raise ValueError("重新上传必须指定活动编号")
+    pages = inputs.get("discovery_pages") or "DEFAULT"
+    recent = inputs.get("recent_activities") or "DEFAULT"
+    pages = choice(pages, {"DEFAULT", "0", "1", "3", "10", "20", "50", "100"}, "读取页数")
+    recent = choice(recent, {"DEFAULT", "1", "10", "20", "50", "100", "200"}, "核对条数")
+    default_pages = nonnegative_integer(env.get("DEFAULT_DISCOVERY_PAGES") or "10", "ONELAP_DISCOVERY_PAGES")
+    default_recent = nonnegative_integer(env.get("DEFAULT_RECENT_LIMIT") or "20", "RECONCILE_RECENT_LIMIT", 1)
+    if default_recent > 200:
+        raise ValueError("RECONCILE_RECENT_LIMIT 必须在 1 到 200 之间")
+    retries = nonnegative_integer(env.get("SYNC_MAX_RETRIES") or "8", "SYNC_MAX_RETRIES", 1)
+    global_dry_run = parse_bool(env.get("DEFAULT_DRY_RUN"), False, name="SYNC_DRY_RUN")
+    request_dry_run = not scheduled and boolean(inputs.get("dry_run"), "dry_run", True) == "true"
+    dry_run = global_dry_run or request_dry_run
     return {
         "SYNC_TARGETS": targets,
-        "ONELAP_DISCOVERY_PAGES": choice(inputs.get("discovery_pages", "1"), {"0", "1", "3", "10", "20", "50", "100"}, "读取页数"),
-        "RECONCILE_RECENT_LIMIT": choice(inputs.get("recent_activities", "20"), {"1", "10", "20", "50", "100", "200"}, "核对条数"),
-        "SYNC_DRY_RUN": "false" if scheduled else boolean(inputs.get("dry_run"), "dry_run", True),
+        "ONELAP_DISCOVERY_PAGES": str(default_pages) if pages == "DEFAULT" else pages,
+        "RECONCILE_RECENT_LIMIT": str(default_recent) if recent == "DEFAULT" else recent,
+        "SYNC_MAX_RETRIES": str(retries),
+        "SYNC_DRY_RUN": str(dry_run).lower(),
         "MANUAL_FULL_SCAN": boolean(inputs.get("full_scan"), "full_scan"),
         "MANUAL_RETRY_AUTH": boolean(inputs.get("retry_auth"), "retry_auth"),
         "MANUAL_FORCE_REUPLOAD": force,

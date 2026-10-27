@@ -18,7 +18,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-ONELAP_BASE_APP_URL = "https://u.onelap.cn"
+ONELAP_BASE_APP_URL = "https://otm.onelap.cn"
 ONELAP_RECORD_PAGE_URL = f"{ONELAP_BASE_APP_URL}/recordPage"
 ONELAP_LOGIN_API = f"{ONELAP_BASE_APP_URL}/api/login"
 ONELAP_REFRESH_API = f"{ONELAP_BASE_APP_URL}/api/token"

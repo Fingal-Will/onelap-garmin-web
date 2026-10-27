@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,7 @@ class GarminUploader:
                 truncated=False,
                 message=execution_error,
             )
+        self._log_activity_stages(process.stdout, region)
         payload = self._extract_typed_result(
             process.stdout,
             "garmin-activities-result",
@@ -140,6 +145,55 @@ class GarminUploader:
             truncated=bool(payload.get("truncated")),
             message=str(payload.get("message") or ""),
         )
+
+    @staticmethod
+    def _log_activity_stages(stdout: str, region: str) -> None:
+        stages = {
+            "load_token": "加载授权",
+            "user_profile": "读取用户资料",
+            "activities": "查询活动列表",
+        }
+        statuses = {"started": "开始", "completed": "完成", "failed": "失败"}
+        for line in stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                not isinstance(event, dict)
+                or event.get("type") != "garmin-activities-stage"
+            ):
+                continue
+            stage = stages.get(event.get("stage"))
+            status = statuses.get(event.get("status"))
+            if stage is None or status is None:
+                continue
+            details = []
+            for key, label in (
+                ("start", "偏移"),
+                ("limit", "请求条数"),
+                ("count", "返回条数"),
+                ("elapsedMs", "耗时毫秒"),
+                ("httpStatus", "HTTP"),
+            ):
+                value = event.get(key)
+                if type(value) is int and value >= 0:
+                    details.append(f"{label}={value}")
+            code = event.get("code")
+            if (
+                isinstance(code, str)
+                and 0 < len(code) <= 64
+                and all(char in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for char in code)
+            ):
+                details.append(f"错误码={code}")
+            log = LOGGER.warning if event["status"] == "failed" else LOGGER.info
+            log(
+                "Garmin %s 核对阶段：%s / %s%s",
+                region,
+                stage,
+                status,
+                f"（{'，'.join(details)}）" if details else "",
+            )
 
     @staticmethod
     def _run_tool(

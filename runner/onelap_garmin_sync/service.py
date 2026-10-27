@@ -10,6 +10,8 @@ from .config import Settings
 from .fit_preprocess import FitPreprocessor
 from .garmin import GarminUploader
 from .ledger import Ledger
+from .strava import StravaError, StravaUploader
+from .strava_reconcile import strava_candidate
 from .onelap import (
     OneLapClient,
     activity_time_of,
@@ -125,12 +127,14 @@ class SyncService:
         onelap: OneLapClient,
         garmin: GarminUploader,
         fit_preprocessor: FitPreprocessor | None = None,
+        strava: StravaUploader | None = None,
     ):
         self.settings = settings
         self.ledger = ledger
         self.onelap = onelap
         self.garmin = garmin
         self.fit_preprocessor = fit_preprocessor
+        self.strava = strava
 
     def run(
         self,
@@ -146,7 +150,7 @@ class SyncService:
         if force_reupload:
             if record_id is None:
                 raise ValueError("--force-reupload 必须与 --record-id 一起使用")
-            if not self.ledger.requeue_activity(record_id, self.settings.targets):
+            if not self.ledger.requeue_activity(record_id, self.settings.upload_targets):
                 raise ValueError(
                     f"台账中找不到活动 {record_id} 的目标区域任务。"
                     "可先增大扫描页数或使用 --full-scan。"
@@ -154,11 +158,11 @@ class SyncService:
             LOGGER.warning(
                 "已将活动 ID %s 的 %s 上传任务重新排队",
                 record_id,
-                ", ".join(self.settings.targets),
+                ", ".join(self.settings.upload_targets),
             )
 
         activities = self.ledger.due_activities(
-            self.settings.targets,
+            self.settings.upload_targets,
             self.settings.max_retries,
             retry_auth,
             record_id=record_id,
@@ -172,9 +176,15 @@ class SyncService:
         else:
             LOGGER.info("本次处理全部 %s 条待同步活动", len(activities))
 
-        failures = 0
+        blocked_strava: set[str] = set()
+        if not self.settings.dry_run and not force_reupload:
+            blocked_strava = self._reconcile_strava(activities, retry_auth)
+        failures = len(blocked_strava)
         for activity in activities:
-            failures += self._process_activity(activity, retry_auth)
+            failures += self._process_activity(
+                activity, retry_auth,
+                skip_strava=str(activity["source_record_id"]) in blocked_strava,
+            )
 
         for row in self.ledger.summary():
             LOGGER.info(
@@ -445,27 +455,94 @@ class SyncService:
                 source_json=json.dumps(
                     activity, ensure_ascii=False, separators=(",", ":")
                 ),
-                targets=self.settings.targets,
+                targets=self.settings.upload_targets,
             )
             new_count += int(was_new)
         return new_count
+
+    def _reconcile_strava(
+        self, activities: list[dict[str, Any]], retry_auth: bool
+    ) -> set[str]:
+        if not self.settings.strava_sync_enabled:
+            return set()
+        rows = [
+            activity
+            for activity in activities
+            if "STRAVA" in self.ledger.due_targets(
+                str(activity["source_record_id"]),
+                ("STRAVA",),
+                self.settings.max_retries,
+                retry_auth,
+            )
+        ]
+        if not rows:
+            return set()
+        candidates = [
+            strava_candidate(str(row["source_record_id"]), _source_activity_of(row))
+            for row in rows
+        ]
+        try:
+            if self.strava is None:
+                self.strava = StravaUploader(self.settings, self.ledger)
+            # 已提交文件的任务继续查询原 upload_id，不会重新提交。
+            candidates = [
+                candidate for candidate in candidates
+                if not self.strava.has_pending_upload(candidate.record_id)
+            ]
+            if not candidates:
+                return set()
+            LOGGER.info("上传前批量核对 Strava：%s 条候选活动", len(candidates))
+            results = self.strava.reconcile(candidates)
+        except Exception as exc:
+            message = (
+                str(exc) if isinstance(exc, StravaError) else
+                "Strava 批量核对异常，请检查配置；本轮暂停 Strava 上传"
+            )
+            for candidate in candidates:
+                self.ledger.record_reconciliation(
+                    candidate.record_id, "STRAVA", "unverified", message
+                )
+            LOGGER.error("Strava 批量核对失败：%s", message)
+            return {candidate.record_id for candidate in candidates}
+
+        blocked: set[str] = set()
+        counts: dict[str, int] = {}
+        for result in results:
+            self.ledger.record_reconciliation(
+                result.record_id,
+                "STRAVA",
+                result.status,
+                result.message,
+                result.remote_activity_id,
+            )
+            counts[result.status] = counts.get(result.status, 0) + 1
+            if result.status in {"ambiguous", "unverified"}:
+                blocked.add(result.record_id)
+                LOGGER.warning("Strava 暂缓 %s：%s", result.record_id, result.message)
+        LOGGER.info(
+            "Strava 批量核对完成：已存在 %s 条（跳过上传），缺失 %s 条，待确认 %s 条",
+            counts.get("present", 0), counts.get("missing", 0), len(blocked),
+        )
+        return blocked
 
     def _process_activity(
         self,
         activity: dict[str, Any],
         retry_auth: bool,
         explicit_targets: list[str] | None = None,
+        *,
+        skip_strava: bool = False,
     ) -> int:
         record_id = str(activity["source_record_id"])
         if explicit_targets is None:
             due_targets = self.ledger.due_targets(
                 record_id,
-                self.settings.targets,
+                self.settings.upload_targets,
                 self.settings.max_retries,
                 retry_auth,
             )
         else:
-            allowed_targets = set(self.settings.targets)
+            allowed_targets = set(self.settings.upload_targets)
             due_targets = sorted(
                 {
                     target
@@ -473,6 +550,8 @@ class SyncService:
                     if target in allowed_targets
                 }
             )
+        if skip_strava:
+            due_targets = [target for target in due_targets if target != "STRAVA"]
         if not due_targets:
             return 0
 
@@ -496,27 +575,37 @@ class SyncService:
 
         failures = 0
         for target in due_targets:
+            destination = "Strava" if target == "STRAVA" else f"Garmin {target}"
             if self.settings.dry_run:
                 LOGGER.info(
-                    "[dry-run] %s 将使用 %s 上传到 Garmin %s",
+                    "[dry-run] %s 将使用 %s 上传到 %s",
                     activity_label,
                     upload_path.name,
-                    target,
+                    destination,
                 )
                 continue
 
             attempt = self.ledger.mark_upload_started(record_id, target)
             LOGGER.info(
-                "上传%s到 Garmin %s，第 %s 次尝试",
+                "上传%s到 %s，第 %s 次尝试",
                 activity_label,
-                target,
+                destination,
                 attempt,
             )
             try:
-                result = self.garmin.upload(target, upload_path)
+                if target == "STRAVA":
+                    if self.strava is None:
+                        self.strava = StravaUploader(self.settings, self.ledger)
+                    result = self.strava.upload(record_id, upload_path)
+                else:
+                    result = self.garmin.upload(target, upload_path)
             except Exception as exc:
                 failures += 1
-                message = f"Garmin 上传器异常：{exc}"
+                message = (
+                    "Strava 上传器异常，请检查配置或文件"
+                    if target == "STRAVA"
+                    else f"Garmin 上传器异常：{exc}"
+                )
                 self.ledger.mark_upload_failed(
                     record_id,
                     target,
@@ -524,11 +613,10 @@ class SyncService:
                     retry_time(attempt, auth_required=False),
                     auth_required=False,
                 )
-                LOGGER.exception(
-                    "Garmin %s 上传异常；%s",
-                    target,
-                    activity_label,
-                )
+                if target == "STRAVA":
+                    LOGGER.error("%s 上传异常；%s", destination, activity_label)
+                else:
+                    LOGGER.exception("%s 上传异常；%s", destination, activity_label)
                 continue
             if result.success:
                 self.ledger.mark_upload_success(
@@ -538,8 +626,8 @@ class SyncService:
                     duplicate=result.duplicate,
                 )
                 LOGGER.info(
-                    "Garmin %s 上传完成：%s%s",
-                    target,
+                    "%s 上传完成：%s%s",
+                    destination,
                     activity_label,
                     "（目标区已存在，按成功记账）" if result.duplicate else "",
                 )
@@ -553,8 +641,8 @@ class SyncService:
                     result.auth_required,
                 )
                 LOGGER.error(
-                    "Garmin %s 上传失败：%s；%s",
-                    target,
+                    "%s 上传失败：%s；%s",
+                    destination,
                     result.message,
                     activity_label,
                 )
@@ -645,7 +733,7 @@ class SyncService:
                 software_version=expected_software_version,
             )
             LOGGER.error(
-                "FIT 预处理失败，两个 Garmin 区域均不上传：%s；%s",
+                "FIT 预处理失败，全部目标均不上传：%s；%s",
                 exc,
                 activity_label,
             )

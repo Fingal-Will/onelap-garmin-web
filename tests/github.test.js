@@ -271,3 +271,79 @@ test('refuses to install into a repository that has unrecognized files', async (
   };
   await assert.rejects(client.installRunner(bundle), /包含其他文件/);
 });
+
+
+test('dispatches saved page and reconciliation defaults through the allowlisted DEFAULT choice', async () => {
+  const calls = [];
+  const client = createClient(managedRouter((url, options) => {
+    calls.push(JSON.parse(options.body));
+    return response(undefined, 204);
+  }));
+  await client.dispatchWorkflow('sync.yml', { discovery_pages: 'DEFAULT', dry_run: true });
+  await client.dispatchWorkflow('reconcile.yml', { recent_activities: 'DEFAULT', dry_run: true });
+  assert.equal(calls[0].inputs.discovery_pages, 'DEFAULT');
+  assert.equal(calls[1].inputs.recent_activities, 'DEFAULT');
+});
+
+test('encrypts Strava secrets and validates shared run variables before any write', async () => {
+  await sodium.ready;
+  const keys = sodium.crypto_box_keypair();
+  const calls = [];
+  const client = createClient(managedRouter((url, options) => {
+    calls.push({ url, options });
+    if (url.pathname.endsWith('/actions/secrets/public-key')) return response({ key_id: 'key-id', key: sodium.to_base64(keys.publicKey, sodium.base64_variants.ORIGINAL) });
+    if (url.pathname.endsWith('/actions/variables') && options.method === 'GET') return response({ variables: [] });
+    if (options.method === 'POST' || options.method === 'PUT') return response(undefined, 204);
+    throw new Error('unexpected route');
+  }));
+  const variables = { STRAVA_SYNC_ENABLED: 'true', ONELAP_DISCOVERY_PAGES: '0', RECONCILE_RECENT_LIMIT: '50', SYNC_MAX_RETRIES: '12', SYNC_DRY_RUN: 'true' };
+  const secrets = { STRAVA_CLIENT_ID: '123', STRAVA_CLIENT_SECRET: 'private-client-secret', STRAVA_REFRESH_TOKEN: 'private-refresh', STRAVA_SESSION_KEY: 'k'.repeat(64) };
+  await client.saveSettings({ secrets, variables });
+  for (const [name, plaintext] of Object.entries(secrets)) {
+    const request = calls.find((call) => call.url.pathname.endsWith(`/actions/secrets/${name}`));
+    const payload = JSON.parse(request.options.body);
+    const opened = sodium.crypto_box_seal_open(sodium.from_base64(payload.encrypted_value, sodium.base64_variants.ORIGINAL), keys.publicKey, keys.privateKey);
+    assert.equal(sodium.to_string(opened), plaintext);
+  }
+  for (const [name, value] of Object.entries({ SYNC_MAX_RETRIES: '0', RECONCILE_RECENT_LIMIT: '201', ONELAP_DISCOVERY_PAGES: '-1', STRAVA_SYNC_ENABLED: 'yes', SYNC_DRY_RUN: 'invalid' })) {
+    const before = calls.length;
+    await assert.rejects(client.saveSettings({ secrets: {}, variables: { [name]: value } }), /无效/);
+    assert.equal(calls.length, before);
+  }
+});
+
+test('reads only allowlisted activity metadata from the verified private default branch', async () => {
+  const client = createClient((url) => {
+    if (url.pathname === '/repos/alice/private-sync') return response(repository({ default_branch: 'sync-data' }));
+    assert.equal(url.pathname, '/repos/alice/private-sync/contents/data/web-status.json');
+    assert.equal(url.searchParams.get('ref'), 'sync-data');
+    return response({ encoding: 'base64', size: 300, content: btoa(JSON.stringify({ schema_version: 2, ledger: { uploads: [] }, source_json: 'sensitive' })) });
+  });
+  const report = await client.readWebReport();
+  assert.equal(report.schema_version, 2);
+  assert.doesNotMatch(JSON.stringify(report), /sensitive/);
+});
+
+test('report missing, malformed, oversized and public repositories do not become fabricated activity data', async () => {
+  for (const [body, status, expected] of [[undefined, 404, null], [{ encoding: 'base64', content: 'not-json' }, 200, /格式/], [{ encoding: 'base64', size: 950001, content: '' }, 200, /大小/]]) {
+    const client = createClient(url => url.pathname === '/repos/alice/private-sync' ? response(repository()) : response(body, status));
+    if (expected === null) assert.equal(await client.readWebReport(), null);
+    else await assert.rejects(client.readWebReport(), expected);
+  }
+  const client = createClient(url => { assert.equal(url.pathname, '/repos/alice/private-sync'); return response(repository({ private: false })); });
+  await assert.rejects(client.readWebReport(), /私有仓库/);
+  await assert.rejects(client.getRunJobs('123'), /私有仓库/);
+});
+
+test('run jobs rejects unsafe ids and exposes stage evidence without raw job payloads', async () => {
+  const client = createClient(url => {
+    if (url.pathname === '/repos/alice/private-sync') return response(repository());
+    assert.equal(url.pathname, '/repos/alice/private-sync/actions/runs/123/jobs');
+    assert.equal(url.searchParams.get('filter'), 'latest');
+    return response({ jobs: [{ secret: 'private-debug', steps: [{ name: '保存台账与汇总', status: 'completed', conclusion: 'failure', raw: 'secret-debug' }] }] });
+  });
+  await assert.rejects(client.getRunJobs('../123'), /编号/);
+  const jobs = await client.getRunJobs('123');
+  assert.equal(jobs[0].steps[0].conclusion, 'failure');
+  assert.doesNotMatch(JSON.stringify(jobs), /private-debug|secret-debug/);
+});

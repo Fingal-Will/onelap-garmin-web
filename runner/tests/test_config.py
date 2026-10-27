@@ -38,6 +38,41 @@ class ConfigTest(unittest.TestCase):
                 settings = Settings.from_env(Path(temporary))
         self.assertEqual(settings.targets, ("GLOBAL", "CN"))
 
+    def test_auto_targets_use_only_complete_configured_regions(self):
+        cases = [
+            ({"GARMIN_GLOBAL_OAUTH1": "{}", "GARMIN_GLOBAL_OAUTH2": "{}"}, ("GLOBAL",)),
+            ({"GARMIN_CN_OAUTH1": "{}", "GARMIN_CN_OAUTH2": "{}"}, ("CN",)),
+            ({"GARMIN_GLOBAL_OAUTH1": "{}", "GARMIN_GLOBAL_OAUTH2": "{}", "GARMIN_CN_OAUTH1": "{}"}, ("GLOBAL",)),
+            ({"GARMIN_GLOBAL_OAUTH1": "{}", "GARMIN_GLOBAL_OAUTH2": "{}", "GARMIN_CN_OAUTH1": "{}", "GARMIN_CN_OAUTH2": "{}"}, ("CN", "GLOBAL")),
+        ]
+        for credentials, expected in cases:
+            for strategy in (None, "AUTO", ""):
+                with self.subTest(credentials=list(credentials), strategy=strategy):
+                    env = dict(credentials)
+                    if strategy is not None:
+                        env["SYNC_TARGETS"] = strategy
+                    with patch.dict(os.environ, env, clear=True):
+                        self.assertEqual(Settings.from_env().targets, expected)
+
+    def test_inactive_china_credentials_are_not_validated(self):
+        with patch.dict(os.environ, {
+            "SYNC_TARGETS": "GLOBAL",
+            "GARMIN_GLOBAL_OAUTH1": "{}", "GARMIN_GLOBAL_OAUTH2": "{}",
+            "GARMIN_CN_OAUTH1": "invalid unused JSON", "GARMIN_CN_OAUTH2": "invalid unused JSON",
+        }, clear=True):
+            settings = Settings.from_env()
+            settings._validate_garmin_sessions()
+            self.assertEqual(settings.targets, ("GLOBAL",))
+
+    def test_explicit_both_requires_china_and_auto_without_accounts_has_clear_error(self):
+        for strategy, message in [("CN,GLOBAL", "GARMIN_CN_OAUTH1"), ("AUTO", "至少配置一个")]:
+            env = {"SYNC_TARGETS": strategy}
+            if strategy != "AUTO":
+                env.update(GARMIN_GLOBAL_OAUTH1="{}", GARMIN_GLOBAL_OAUTH2="{}")
+            with patch.dict(os.environ, env, clear=True):
+                with self.assertRaisesRegex(ValueError, message):
+                    Settings.from_env()._validate_garmin_sessions()
+
     def test_garmin_device_profile_uses_one_shared_profile(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.dict(

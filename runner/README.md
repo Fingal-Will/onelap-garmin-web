@@ -1,5 +1,11 @@
 # OneLap Garmin 私有同步程序
 
+同步区域由 `SYNC_TARGETS` 控制：`GLOBAL` 仅国际区，`CN` 仅中国区，
+`CN,GLOBAL` 为双区，`AUTO` 按同时配置 OAuth1/OAuth2 的区域自动判断。
+未设置时默认 `AUTO`。私有仓库 Actions Variables 中设置 `SYNC_TARGETS=GLOBAL`
+即可长期只同步国际区，不需要配置中国区会话。手动同步与核对默认使用此设置；
+手动指定其他区域只影响当次运行。旧台账的中国区记录会保留，但不参与单区重试。
+
 此目录是由网页控制台安装到专用 GitHub 私有仓库的同步程序。它从 OneLap 下载
 FIT 活动，分别上传到 Garmin 中国区和国际区，并在私有仓库的 `data/sync.db` 中
 保存同步台账。台账包含活动 ID、时间、名称和文件哈希等个人运动元数据，因此运行
@@ -12,7 +18,7 @@ FIT 活动，分别上传到 Garmin 中国区和国际区，并在私有仓库�
 ## GitHub Actions 设置
 
 安装后，在私有仓库的 Actions 设置中允许工作流读取和写入仓库内容。同步工作流会
-提交 `data/sync.db` 和仅含聚合数量的 `data/web-status.json`；它不会提交下载的
+提交 `data/sync.db` 和私有报告 `data/web-status.json`；它不会提交下载的
 FIT 文件、处理后的文件、临时锁或 SQLite WAL 文件。
 
 网页控制台会设置以下 Secrets：
@@ -30,7 +36,13 @@ OAuth Secrets 后会删除这些临时 Secrets 和分支。若页面意外关闭
 
 非敏感 Variables 包括 `GARMINIZE_FIT_ENABLED`、
 `FIT_COORDINATE_TRANSFORM_ENABLED`、`GARMIN_DEVICE_PRODUCT_ID`、
-`GARMIN_DEVICE_SOFTWARE_VERSION`、`SYNC_TARGETS` 和 `SYNC_ENABLED`。
+`GARMIN_DEVICE_SOFTWARE_VERSION`、`SYNC_TARGETS`、`SYNC_ENABLED`、
+`ONELAP_DISCOVERY_PAGES`、`RECONCILE_RECENT_LIMIT`、`SYNC_MAX_RETRIES`、
+`SYNC_DRY_RUN` 和 `STRAVA_SYNC_ENABLED`。
+
+默认发现 10 页、核对最近 20 条、最大重试 8 次。手动任务默认使用已保存的页数和
+核对条数，选择具体数值只影响当次任务。`SYNC_DRY_RUN=true` 是全局仅验证开关，
+即使手动任务取消“仅验证”，也不会上传。自动同步仍由 `SYNC_ENABLED` 单独控制。
 
 默认情况下定时同步关闭。只有将 `SYNC_ENABLED` 设为 `true` 后，`sync.yml` 才会
 按计划运行。三项工作流都会拒绝非私有仓库和非默认分支；工作流输入在写入环境变量
@@ -74,8 +86,58 @@ npm run check
 运行时行为还会受 OneLap 和 Garmin 的非公开接口、服务条款和风控策略影响；详细来源
 和许可限制见 [NOTICE.md](NOTICE.md)。
 
+## Strava 同步（可选）
+
+Strava 默认关闭，Garmin 中国区和国际区仍可以独立选择。开启时额外保存
+`STRAVA_CLIENT_ID`、`STRAVA_CLIENT_SECRET`、`STRAVA_REFRESH_TOKEN`、
+`STRAVA_SESSION_KEY` 四项 Secrets。首次开启时网页自动生成 Strava 会话加密密钥，
+以后留空会保留原值。动态刷新后的授权加密存入现有台账，不保存明文 token。
+
+在可信的本机副本中安装 Python 依赖后，执行：
+
+```bash
+python -m onelap_garmin_sync.strava_auth
+```
+
+跟随提示完成 `activity:read_all,activity:write` 授权，把输出的值填入网页中的
+“Strava 同步（可选）”表单。该命令是本机交互工具，不在 Actions 中执行。
+重新授权只替换 Refresh Token，保留原 `STRAVA_SESSION_KEY` 和 `data/sync.db`。
+
+同步任务先批量查询 Strava 活动，用时间、距离、时长判断已有活动。已存在则跳过，
+确认缺失才上传；匹配有歧义、列表读取不完整或授权不足时暂缓 Strava，Garmin
+继续执行。上传中的任务会在下次查询结果，避免重复提交。指定活动“强制重新上传”
+会跳过 Strava 预核对，请在明确需要时使用。“核对并补同步”只处理 Garmin，
+Strava 的核对在普通同步任务中完成。网页状态汇总包含 Strava 的上传计数。
+
+## 升级已有私有仓库
+
+网页安装入口仍只支持首次安装。更新公共网页不会自动改动已有私有运行仓库。
+升级前暂停自动同步并等待已有任务结束，备份 `data/sync.db`；在私有仓库默认分支
+审阅并更新本模板的 `onelap_garmin_sync/`、`uploader/`、`scripts/`、`tests/`、
+`.github/workflows/`、依赖清单与锁文件、`.env.example`、`.gitignore`、
+`.onelap-web.json` 及本文说明。只复制模板里的源码文件，保留私有仓库原有 `data/`、
+Secrets 和 Variables。不要用本项目或其他用户的台账替换自己的台账。
+
+提交后重新连接网页，检查安装版本为 `1.3.0`，保存运行设置并执行一次“仅验证”，
+确认成功后再恢复原来的自动同步设置。旧版功能标记缺失时，网页会拒绝保存新运行
+选项或开启 Strava，避免设置被静默忽略；原有凭据设置仍可保存。
+
 ## 快照来源
 
-此安装包的引擎快照来自 `Fingal-Will/onelap-garmin-dual-sync` 的
-`002fff7c096884472ee0eb4601b49f5105787515`，并包含生成模板时该工作区中的未提交
-引擎修改。精确的安装包版本由 `.onelap-web.json` 中的 `version` 标识。
+此安装包的共享引擎文件来自 `Fingal-Will/onelap-garmin-dual-sync` 的
+`7e487634e2a26c8d764f919e1b52debb4c991252` 已提交快照。Web 保留独立的私有仓库
+校验、加密凭据保存、网页请求处理和状态导出。安装包版本与功能标记由
+`.onelap-web.json` 标识；本版为 `1.3.0`。
+
+
+## 私有网页活动报告
+
+1.3.0 导出 schema 2：累计活动与目标计数，以及最近 200 条活动的编号、名称、时间、
+下载/处理状态、原始文件 SHA-256 和逐目标上传/核对证据。明细按活动时间降序排列。
+账号、密码、Token、Unit ID、原始来源响应、文件路径和错误原文均不进入报告；
+此报告包含个人运动元数据，随台账仅保存在用户专用私有仓库。
+
+网页对 schema 1 降级展示聚合计数；旧表缺少明细所需列时不生成虚构记录。未能读取
+台账时 `ledger.available=false`，网页显示未知数量。报告中的运行状态在保存步骤前
+写入，因此网页另查 Actions 的“保存台账与汇总”步骤判定持久化，不能用该字段或
+整个工作流成功与否代替台账保存结果。保存失败时先查看恢复附件并核对远端。

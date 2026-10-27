@@ -1,11 +1,18 @@
 {
-  "version": "1.0.0",
+  "version": "1.3.0",
   "schema_version": 1,
   "project": "onelap-garmin-web",
+  "features": [
+    "default-sync-targets",
+    "shared-run-settings",
+    "strava-sync",
+    "garmin-stage-diagnostics",
+    "private-activity-report"
+  ],
   "engine": {
     "repository": "https://github.com/Fingal-Will/onelap-garmin-dual-sync",
-    "head": "002fff7c096884472ee0eb4601b49f5105787515",
-    "snapshot": "working-tree",
-    "includes_uncommitted_changes": true
+    "head": "7e487634e2a26c8d764f919e1b52debb4c991252",
+    "snapshot": "committed",
+    "includes_uncommitted_changes": false
   }
 }

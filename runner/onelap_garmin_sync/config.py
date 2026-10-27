@@ -5,7 +5,25 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+
+def resolve_sync_targets(raw: str | None, env: Mapping[str, str]) -> tuple[str, ...]:
+    strategy = (raw or "AUTO").strip().upper() or "AUTO"
+    if strategy == "AUTO":
+        return tuple(
+            region
+            for region in ("CN", "GLOBAL")
+            if env.get(f"GARMIN_{region}_OAUTH1", "").strip()
+            and env.get(f"GARMIN_{region}_OAUTH2", "").strip()
+        )
+    targets = tuple(
+        dict.fromkeys(target.strip() for target in strategy.split(",") if target.strip())
+    )
+    invalid = sorted(set(targets) - {"CN", "GLOBAL"})
+    if invalid or not targets:
+        raise ValueError("SYNC_TARGETS 只能为 AUTO、CN、GLOBAL 或 CN,GLOBAL")
+    return targets
 
 
 def parse_bool(
@@ -97,6 +115,32 @@ class Settings:
     processed_dir: Path | None = None
     garmin_device_profile: GarminDeviceProfile | None = None
 
+    strava_sync_enabled: bool = False
+    strava_client_id: str = ""
+    strava_client_secret: str = ""
+    strava_refresh_token: str = ""
+    strava_session_key: str = ""
+
+    @property
+    def upload_targets(self) -> tuple[str, ...]:
+        return self.targets + (("STRAVA",) if self.strava_sync_enabled else ())
+
+    def validate_for_strava(self) -> None:
+        if not self.strava_sync_enabled or self.dry_run:
+            return
+        missing = [
+            name
+            for name, value in (
+                ("STRAVA_CLIENT_ID", self.strava_client_id),
+                ("STRAVA_CLIENT_SECRET", self.strava_client_secret),
+                ("STRAVA_REFRESH_TOKEN", self.strava_refresh_token),
+                ("STRAVA_SESSION_KEY", self.strava_session_key),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError("已开启 Strava 同步，缺少配置：" + ", ".join(missing))
+
     @classmethod
     def from_env(cls, root_dir: Path | None = None) -> "Settings":
         root = (root_dir or Path.cwd()).resolve()
@@ -107,18 +151,7 @@ class Settings:
             else root / configured_data_dir
         ).resolve()
 
-        raw_targets = os.getenv("SYNC_TARGETS", "CN,GLOBAL")
-        targets = tuple(
-            target.strip().upper()
-            for target in raw_targets.split(",")
-            if target.strip()
-        )
-        invalid_targets = sorted(set(targets) - {"CN", "GLOBAL"})
-        if invalid_targets or not targets:
-            raise ValueError(
-                "SYNC_TARGETS 只能包含 CN、GLOBAL，当前值: "
-                + (", ".join(invalid_targets) if invalid_targets else "空")
-            )
+        targets = resolve_sync_targets(os.getenv("SYNC_TARGETS"), os.environ)
 
         common_product_id = parse_optional_int(
             os.getenv("GARMIN_DEVICE_PRODUCT_ID"),
@@ -179,6 +212,13 @@ class Settings:
             ),
             processed_dir=data_dir / "processed",
             garmin_device_profile=device_profile,
+            strava_sync_enabled=parse_bool(
+                os.getenv("STRAVA_SYNC_ENABLED"), False, name="STRAVA_SYNC_ENABLED"
+            ),
+            strava_client_id=os.getenv("STRAVA_CLIENT_ID", "").strip(),
+            strava_client_secret=os.getenv("STRAVA_CLIENT_SECRET", "").strip(),
+            strava_refresh_token=os.getenv("STRAVA_REFRESH_TOKEN", "").strip(),
+            strava_session_key=os.getenv("STRAVA_SESSION_KEY", "").strip(),
         )
 
     def prepare_directories(self) -> None:
@@ -205,7 +245,10 @@ class Settings:
         return self.garmin_device_profile
 
     def validate_for_sync(self) -> None:
+        self.validate_for_strava()
         self.validate_for_onelap()
+        if not self.targets:
+            raise ValueError("请至少配置一个 Garmin 区域的完整 OAuth 会话，或设置 SYNC_TARGETS 为已配置区域")
         if not self.uploader_path.exists():
             raise ValueError(f"Garmin 上传器不存在: {self.uploader_path}")
 
@@ -235,6 +278,8 @@ class Settings:
         return None
 
     def _validate_garmin_sessions(self) -> None:
+        if not self.targets:
+            raise ValueError("请至少配置一个 Garmin 区域的完整 OAuth 会话，或设置 SYNC_TARGETS 为已配置区域")
         missing: list[str] = []
         for region in self.targets:
             prefix = "GARMIN_CN" if region == "CN" else "GARMIN_GLOBAL"
