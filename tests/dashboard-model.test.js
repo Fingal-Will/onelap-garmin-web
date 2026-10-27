@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { enabledTargets, activityComplete, uploadState, filterActivities, manualImpact, normalizeReport, ledgerSaveState, configCompleteness, summarize, simulationEvidence } from '../web/src/dashboard-model.js';
-import { demoReport, demoSnapshot } from '../web/src/dashboard-demo.js';
+import { fixtureReport, fixtureSnapshot } from './dashboard-fixtures.js';
 
 test('activity completion considers each enabled target and never completes an empty target set', () => {
   const activity = { targets: { CN: { status: 'success' }, GLOBAL: { status: 'auth_required' }, STRAVA: { status: 'uploading' } } };
@@ -9,7 +9,7 @@ test('activity completion considers each enabled target and never completes an e
   assert.equal(activityComplete(activity, ['CN', 'GLOBAL']), false);
   assert.equal(activityComplete(activity, []), false);
   assert.equal(activityComplete(activity, ['STRAVA']), false);
-  assert.deepEqual(enabledTargets(demoSnapshot), ['CN', 'GLOBAL', 'STRAVA']);
+  assert.deepEqual(enabledTargets(fixtureSnapshot), ['CN', 'GLOBAL', 'STRAVA']);
   assert.equal(configCompleteness({ secrets: ['GARMIN_CN_OAUTH1'] }).CN, false);
 });
 
@@ -23,24 +23,24 @@ test('auth, retry limits, uncertainty and asynchronous uploads keep distinct sta
 });
 
 test('filters combine activity query, completion and individual platform state', () => {
-  const rows = demoReport.activity_items;
-  const targets = enabledTargets(demoSnapshot);
+  const rows = fixtureReport.activity_items;
+  const targets = enabledTargets(fixtureSnapshot);
   assert.equal(filterActivities(rows, { tab: 'attention' }, targets).length, 3);
   assert.equal(filterActivities(rows, { tab: 'complete' }, targets).length, 9);
   assert.equal(filterActivities(rows, { target: 'GLOBAL', status: 'auth_required' }, targets).length, 1);
   assert.equal(filterActivities(rows, { query: '周末耐力' }, targets)[0].id, rows[0].id);
-  assert.equal(filterActivities(rows, { query: 'DEMO-1025-0001' }, targets).length, 1);
+  assert.equal(filterActivities(rows, { query: 'TEST-1025-0001' }, targets).length, 1);
   assert.equal(filterActivities(rows, { days: 7, now: Date.parse('2026-10-26T00:00:00Z') }, targets).length, 7);
-  assert.deepEqual(summarize(demoReport, targets), { activities: 12, total: 36, complete: 33, pending: 3 });
+  assert.deepEqual(summarize(fixtureReport, targets), { activities: 12, total: 36, complete: 33, pending: 3 });
 });
 
 test('single-run Garmin selection retains independently enabled Strava and global dry-run', () => {
-  assert.deepEqual(manualImpact('CN', demoSnapshot), { targets: ['CN', 'STRAVA'], dryRun: false });
-  assert.deepEqual(manualImpact('DEFAULT', { ...demoSnapshot, variables: { ...demoSnapshot.variables, SYNC_DRY_RUN: 'true' } }, false), { targets: ['CN', 'GLOBAL', 'STRAVA'], dryRun: true });
+  assert.deepEqual(manualImpact('CN', fixtureSnapshot), { targets: ['CN', 'STRAVA'], dryRun: false });
+  assert.deepEqual(manualImpact('DEFAULT', { ...fixtureSnapshot, variables: { ...fixtureSnapshot.variables, SYNC_DRY_RUN: 'true' } }, false), { targets: ['CN', 'GLOBAL', 'STRAVA'], dryRun: true });
 });
 
 test('report normalization only exposes allowed metadata and supports aggregate-only older reports', () => {
-  const input = structuredClone(demoReport);
+  const input = structuredClone(fixtureReport);
   input.source_json = 'secret-source';
   input.activity_items[0].source_json = 'secret-source';
   input.activity_items[0].targets.CN.last_error = 'secret-error';
@@ -64,7 +64,7 @@ test('ledger saving uses the actual persistence step, independent of workflow ex
 
 
 test('setup requires a matching successful single-activity simulation, not a checkbox or unrelated run', () => {
-  const report = structuredClone(demoReport);
+  const report = structuredClone(fixtureReport);
   const id = report.activity_items[0].id;
   report.run = { ...report.run, id: '123', record_id: id, dry_run: true, status: 'success' };
   const runs = [{ id: 123, status: 'completed', conclusion: 'success' }];

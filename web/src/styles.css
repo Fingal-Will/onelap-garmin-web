@@ -50,13 +50,10 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overf
 .nav-item.active { color: #087b7e; background: #def3f1; font-weight: 650; }
 .sidebar-bottom { margin-top: auto; padding: 30px 9px 0; }
 .sidebar-bottom > .button { padding-left: 0; }
-.sidebar-footer { display: grid; gap: 14px; margin-top: 18px; padding-top: 23px; border-top: 1px solid var(--border); color: #68818d; }
-.sidebar-footer > span { display: flex; align-items: center; gap: 13px; }
 .workspace { min-width: 0; display: flex; flex-direction: column; }
 .topbar { height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 32px; background: #ffffffd9; border-bottom: 1px solid var(--border); }
 .topbar-instance, .topbar-actions { display: flex; align-items: center; gap: 16px; }
 .instance-label { color: #647c89; font-size: 13px; }
-.topbar-date { color: #647c89; font-size: 12px; white-space: nowrap; }
 .connection-pill { display: flex; gap: 7px; align-items: center; border-radius: 20px; padding: 5px 10px; border: 1px solid var(--border); font-size: 11px; color: var(--muted); white-space: nowrap; }
 .dot { width: 6px; height: 6px; border-radius: 100%; background: #9aaab0; }
 .connected .dot { background: #119269; }
@@ -259,7 +256,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overf
 @media (max-width: 1280px) {
   .shell { grid-template-columns: 210px minmax(0, 1fr); }
   .sidebar { padding: 24px 12px; } .brand { padding: 0 8px; gap: 8px; } .brand strong { font-size: 19px; }
-  .main { padding: 26px 24px; } .topbar { padding: 0 24px; } .topbar-date { display: none; }
+  .main { padding: 26px 24px; } .topbar { padding: 0 24px; }
   .sync-graph { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 14px; } .graph-arrow { display: none; }
   .target-tile { flex-wrap: wrap; } .target-tile .result-badge { margin-left: 50px; } .target-tile .chevron { display: none; }
   .metric { padding: 13px 10px; gap: 10px; } .metric-icon { width: 35px; height: 40px; }

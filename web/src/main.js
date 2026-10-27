@@ -183,7 +183,7 @@ function safeGithubUrl(value) {
 }
 
 async function runTask(message, task) {
-  if (!state.client || state.busy || dashboard?.isDemo()) return;
+  if (!state.client || state.busy) return;
   try { setBusy(true, message); return await task(); }
   catch (error) { const messageText = errorMessage(error); setText('activity-status', messageText); toast(messageText, 'error'); }
   finally { setBusy(false); }
@@ -218,7 +218,7 @@ function credentialSummary() {
   const names = new Set(state.snapshot.secrets || []);
   const expected = ['ONELAP_ACCOUNT', 'ONELAP_PASSWORD', 'ONELAP_TOKEN', 'GARMIN_CN_OAUTH1', 'GARMIN_CN_OAUTH2', 'GARMIN_GLOBAL_OAUTH1', 'GARMIN_GLOBAL_OAUTH2', 'GARMIN_DEVICE_UNIT_ID', 'STRAVA_CLIENT_ID', 'STRAVA_CLIENT_SECRET', 'STRAVA_REFRESH_TOKEN', 'STRAVA_SESSION_KEY'];
   const present = expected.filter((name) => names.has(name));
-  setText('credential-status', present.length ? `仓库已保存 ${present.length} 项受管凭据；网页不会读取 Secret 内容。` : '尚未检测到受管凭据。');
+  setText('credential-status', present.length ? `已保存 ${present.length} 项凭据。` : '尚未保存凭据。');
   const container = get('credential-list');
   container.replaceChildren(...present.map((name) => element('span', { class: 'secret-pill', text: name })));
   const temporary = [...names].filter((name) => /^GARMIN_OAUTH_[A-F0-9]{32}_(?:USERNAME|PASSWORD|RESULT_KEY)$/.test(name));
@@ -268,7 +268,7 @@ async function refreshRepository({ quiet = false } = {}) {
 }
 
 async function connect() {
-  if (state.busy || dashboard?.isDemo()) return;
+  if (state.busy) return;
   const token = get('github-token').value;
   const owner = get('github-owner').value;
   const repo = get('github-repo').value;
@@ -415,7 +415,7 @@ async function dispatchSync(validation = false) {
       return;
     }
     await state.client.dispatchWorkflow('sync.yml', inputs);
-    setText('run-status', validation ? '验证任务已提交：仅检查一页活动，不上传到 Garmin。' : '同步任务已提交，GitHub Actions 将在队列中执行。');
+    setText('run-status', validation ? '验证任务已提交：检查一页活动，不上传到目标平台。' : '同步任务已提交，GitHub Actions 将在队列中执行。');
     try { await loadRuns(); } catch { /* Dispatch already succeeded; GitHub may not list the new run immediately. */ }
     toast(validation ? '配置验证任务已提交。' : '同步任务已提交。');
   });
@@ -505,7 +505,7 @@ async function loadRuns() {
 }
 
 async function pollRuns() {
-  if (!state.client || dashboard?.isDemo() || state.busy || state.polling || document.visibilityState !== 'visible') return;
+  if (!state.client || state.busy || state.polling || document.visibilityState !== 'visible') return;
   state.polling = true;
   try { await loadRuns(); } catch { /* Background polling never interrupts an active workflow. */ }
   finally { state.polling = false; }
@@ -640,21 +640,9 @@ async function cleanupGarminOAuth() {
 }
 
 function buildInterface() {
-  const sidebar = element('aside', { class: 'sidebar', 'aria-label': '控制台导航' }, [
-    element('div', { class: 'brand' }, [icon('activity'), element('span', {}, [document.createTextNode('OneLap'), element('small', { text: 'GARMIN SYNC' })])]),
-    element('p', { class: 'sidebar-caption', text: '同步控制台' }),
-    element('nav', { class: 'nav-list', 'aria-label': '页面区段' }, [
-      element('a', { class: 'nav-item active', href: '#connection' }, [icon('key', true), document.createTextNode('连接仓库')]),
-      element('a', { class: 'nav-item', href: '#settings' }, [icon('settings', true), document.createTextNode('运行设置')]),
-      element('a', { class: 'nav-item', href: '#run' }, [icon('play', true), document.createTextNode('运行任务')]),
-    ]),
-    element('div', { class: 'sidebar-bottom' }, [element('div', { class: 'private-note' }, [element('h3', {}, [icon('lock', true), document.createTextNode('私有仓库模式')]), element('p', { text: 'GitHub Token 只保留在当前页面内存；表单凭据在浏览器加密后保存为 Actions Secrets。' })]), element('div', { class: 'sidebar-footer' }, [element('span', { text: 'PERSONAL USE' }), element('a', { href: 'https://docs.github.com/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions', target: '_blank', rel: 'noopener noreferrer', text: '安全说明' })])]),
-  ]);
+  const connectionPill = element('div', { class: 'connection-pill', id: 'connection-pill' }, [element('span', { class: 'dot' }), element('span', { class: 'pill-label', text: '未连接' })]);
 
-  const mobile = element('div', { class: 'mobile-brand' }, [icon('activity'), element('span', { text: 'OneLap 同步' })]);
-  const topbar = element('header', { class: 'topbar' }, [mobile, element('div', { class: 'breadcrumb' }, [element('span', { text: '个人工具' }), element('span', { text: '/' }), element('strong', { text: '同步控制台' })]), element('div', { class: 'connection-pill', id: 'connection-pill' }, [element('span', { class: 'dot' }), element('span', { class: 'pill-label', text: '未连接' })])]);
-
-  const tokenField = makeField({ id: 'github-token', label: 'Fine-grained Personal Access Token', type: 'password', placeholder: 'github_pat_…', help: 'Token 仅保留在本页内存。', required: true, autocomplete: 'off' });
+  const tokenField = makeField({ id: 'github-token', label: 'GitHub 访问令牌（Fine-grained Token）', type: 'password', placeholder: 'github_pat_…', help: 'Token 仅保留在本页内存。', required: true, autocomplete: 'off' });
   tokenField.querySelector('.helper').replaceChildren(
     document.createTextNode('此仓库 Token 需要 Contents、Actions、Secrets、Variables 与 Workflows 的读写权限。'),
     document.createTextNode(' '),
@@ -668,14 +656,13 @@ function buildInterface() {
         tokenField,
         element('div', { class: 'field' }, [element('div', { class: 'field-heading' }, [element('label', { text: '连接状态' })]), element('p', { class: 'status-message', id: 'connection-status', text: '选择自己的专用私有仓库后连接。' })]),
       ]),
-      element('div', { class: 'actions-row' }, [button('连接并检查', { type: 'submit', variant: 'primary', icon: 'key' }), button('断开并清空本页凭据', { variant: 'ghost', icon: 'refresh', onClick: disconnect }), element('span', { class: 'actions-note', text: '只连接 private repository' })]),
+      element('div', { class: 'actions-row' }, [button('连接并检查', { type: 'submit', variant: 'primary', icon: 'key' }), button('断开并清空本页凭据', { variant: 'ghost', icon: 'refresh', onClick: disconnect })]),
     ]),
-    notice('warning', '请使用专用私有仓库', '安装程序会创建一次普通提交。为保护现有文件，控制台拒绝在包含其他文件的仓库中安装。'),
+    notice('warning', '请使用专用私有仓库', '安装会提交文件，请使用空仓库或仅包含 README、LICENSE、.gitignore 的仓库。'),
   ];
 
   const installBody = [
-    element('p', { class: 'helper', text: '安装包包含同步工作流、运行脚本与严格的请求校验，不包含账号、会话、活动数据或本地台账。' }),
-    element('ul', { class: 'setup-progress' }, [element('li', { text: '只发布到已验证的私有仓库默认分支' }), element('li', { text: '安装前检查仓库内容，避免覆盖' }), element('li', { text: '使用非强制提交更新分支' })]),
+    element('p', { class: 'helper', text: '安装内容包括同步工作流与运行脚本，不含账号或活动数据。' }),
     element('div', { class: 'actions-row' }, [button('安装同步程序', { variant: 'primary', icon: 'download', onClick: installRunner, disabled: true }), element('span', { class: 'status-message', id: 'install-status', text: '连接仓库后可检查安装状态。' })]),
   ];
 
@@ -720,13 +707,13 @@ function buildInterface() {
     sessionHelp,
     element('div', { class: 'form-grid' }, [
       makeField({ id: 'onelap-account', label: '顽鹿账号', placeholder: '账号或手机号', help: '可与密码搭配，或改用下方 Token。已保存凭据可留空。' }),
-      makeField({ id: 'onelap-password', label: '顽鹿密码', type: 'password', placeholder: '仅本页内存', help: '保存完成后会从本页清除。', autocomplete: 'new-password' }),
+      makeField({ id: 'onelap-password', label: '顽鹿密码', type: 'password', placeholder: '输入顽鹿密码', help: '保存完成后会从本页清除。', autocomplete: 'new-password' }),
       makeField({ id: 'onelap-token', label: '顽鹿 Token（可选）', type: 'password', placeholder: '优先于账号密码', help: '可替代账号密码；不会回显或持久保存到网页。', autocomplete: 'off' }),
       makeField({ id: 'settings-targets', label: '默认同步区域', value: 'AUTO', options: [{ value: 'AUTO', label: '按已配置账号自动判断' }, { value: 'GLOBAL', label: '仅国际区' }, { value: 'CN', label: '仅中国区' }, { value: 'CN,GLOBAL', label: '中国区 + 国际区' }], help: '保存后用于自动同步和默认手动任务。只用国际区时选“仅国际区”，中国区会话可留空；修改后请保存。' }),
       makeField({ id: 'default-pages', label: '默认发现页数', type: 'number', value: '10', help: '0–100；0 表示不限页数。用于自动同步和默认手动任务。' }),
       makeField({ id: 'default-recent', label: '默认核对条数', type: 'number', value: '20', help: '1–200；核对按时间从新到旧选择活动。' }),
-      makeField({ id: 'max-retries', label: '最大重试次数', type: 'number', value: '8', help: '1–100；修复登录后可勾选“重试登录失败”。' }),
-      element('div', { class: 'field' }, [checkField('global-dry-run', '全局仅验证', '开启后手动和定时任务都只验证；单次任务无法关闭此设置。')]),
+      makeField({ id: 'max-retries', label: '最大重试次数', type: 'number', value: '8', help: '1–100；更新授权后可选择“授权重试”。' }),
+      element('div', { class: 'field' }, [checkField('global-dry-run', '全局模拟运行', '开启后手动和定时任务都只验证；单次任务无法关闭此设置。')]),
       cnInput, globalInput,
       makeField({ id: 'unit-id', label: 'Garmin 设备 Unit ID', type: 'number', placeholder: '1000000000 - 4294967295', help: '使用自己真实设备的 Unit ID。该值作为 Secret 加密保存。', required: true, autocomplete: 'off' }),
       productPreset, productField,
@@ -737,18 +724,18 @@ function buildInterface() {
     element('details', { class: 'session-help' }, [
       element('summary', { text: 'Strava 同步（可选）' }),
       checkField('strava-enabled', '同时同步到 Strava', '默认关闭。上传前批量核对已有活动；读取授权不足时保留待确认任务，并继续 Garmin 同步。'),
-      element('p', { text: '先在本机副本中运行 python -m onelap_garmin_sync.strava_auth，完成 activity:read_all 和 activity:write 授权，再填写以下值。该命令在 runner 目录执行；已安装到私有仓库的副本则在根目录执行。' }),
+      element('p', { text: '在已安装同步程序的私有仓库本机副本中运行 python -m onelap_garmin_sync.strava_auth，完成 activity:read_all 和 activity:write 授权后填写。' }),
       element('div', { class: 'form-grid' }, [
         makeField({ id: 'strava-client-id', label: 'Strava Client ID', type: 'password', help: '已保存时留空。' }),
         makeField({ id: 'strava-client-secret', label: 'Strava Client Secret', type: 'password', help: '通过 GitHub 公钥加密后保存。' }),
         makeField({ id: 'strava-refresh-token', label: 'Strava Refresh Token', type: 'password', help: '重新授权时仅替换此值，保留原会话密钥和台账。' }),
         makeField({ id: 'strava-session-key', label: 'Strava 会话加密密钥（可选）', type: 'password', help: '至少 32 字节；首次开启自动生成，已保存时留空。' }),
       ]),
-      element('p', { text: '“核对并补同步”继续只处理 Garmin 区域；Strava 的批量核对在同步任务中执行。旧版私有仓库需先更新同步程序。' }),
+      element('p', { text: 'Strava 的核对在同步任务中自动执行。' }),
     ]),
     element('p', { class: 'session-status', id: 'default-target-status' , text: '默认按已配置账号自动判断；中国区和国际区可以独立使用。' }),
     element('div', { class: 'check-panel' }, [element('strong', { text: '已保存凭据状态' }), element('p', { class: 'session-status', id: 'credential-status', text: '连接仓库后读取 Secret 名称，不读取 Secret 内容。' }), element('div', { class: 'secret-list', id: 'credential-list' })]),
-    element('div', { class: 'actions-row' }, [button('加密保存设置', { variant: 'primary', icon: 'lock', onClick: saveSettings, disabled: true }), button('验证已保存配置', { variant: 'subtle', icon: 'shield', onClick: () => dispatchSync(true), disabled: true }), button('清理授权临时数据', { variant: 'ghost', icon: 'trash', onClick: cleanupGarminOAuth, disabled: true }), element('span', { class: 'status-message', id: 'settings-status', text: '请先保存设置，再验证已写入 GitHub Secrets 与 Variables 的配置。空白 Secret 字段会保留现有值。' })]),
+    element('div', { class: 'actions-row' }, [button('加密保存设置', { variant: 'primary', icon: 'lock', onClick: saveSettings, disabled: true }), button('验证已保存配置', { variant: 'subtle', icon: 'shield', onClick: () => dispatchSync(true), disabled: true }), button('清理授权临时数据', { variant: 'ghost', icon: 'trash', onClick: cleanupGarminOAuth, disabled: true }), element('span', { class: 'status-message', id: 'settings-status', text: '保存后可验证配置。凭据留空会保留已保存值。' })]),
     element('p', { class: 'session-status', id: 'oauth-cleanup-status', text: '连接仓库后可检查。' }),
   ];
 
@@ -756,7 +743,6 @@ function buildInterface() {
     element('div', { class: 'session-grid' }, [
       element('section', { class: 'session-card', 'aria-labelledby': 'sync-title' }, [
         element('div', { class: 'session-title' }, [element('span', { id: 'sync-title', text: '手动同步' }), element('span', { class: 'badge', text: 'sync.yml' })]),
-        element('p', { text: '按设置发现活动，可选择只验证或上传。' }),
         makeField({ id: 'sync-targets', label: '目标区域', value: 'DEFAULT', options: [{ value: 'DEFAULT', label: '使用已保存的默认设置' }, { value: 'GLOBAL', label: '仅国际区（仅本次）' }, { value: 'CN', label: '仅中国区（仅本次）' }, { value: 'CN,GLOBAL', label: '双区（仅本次）' }] }),
         makeField({ id: 'sync-pages', label: '发现页数', value: 'DEFAULT', options: [{ value: 'DEFAULT', label: '使用已保存的默认页数' }, { value: '1', label: '1 页（最多 20 条）' }, { value: '3', label: '3 页' }, { value: '10', label: '10 页' }, { value: '20', label: '20 页' }, { value: '50', label: '50 页' }, { value: '100', label: '100 页' }, { value: '0', label: '不限页数' }] }),
         makeField({ id: 'sync-record-id', label: '指定活动编号（可选）', placeholder: '只处理此活动', help: '重新上传时必须填写。' }),
@@ -777,13 +763,12 @@ function buildInterface() {
         element('div', { class: 'actions-row' }, [button('提交核对', { variant: 'subtle', icon: 'refresh', onClick: dispatchReconcile, disabled: true })]),
       ]),
     ]),
-    element('p', { class: 'status-message', id: 'run-status', text: '任务会在 GitHub Actions 队列中执行；每次请求均包含独立编号。' }),
+    element('p', { class: 'status-message', id: 'run-status', text: '提交后可在运行记录中查看进度。' }),
   ];
 
   const scheduleCard = element('section', { class: 'card aside-card', id: 'schedule', 'aria-labelledby': 'schedule-title' }, [
     element('div', { class: 'aside-heading' }, [element('h2', { id: 'schedule-title', text: '自动同步' }), icon('clock', true)]),
     checkField('schedule-enabled', '开启自动同步', '每小时第 7 和 37 分钟运行，使用已保存的区域设置。'),
-    element('p', { class: 'schedule-description', text: '约每 30 分钟触发一次。GitHub Actions 可能因平台负载延后，最终状态以运行记录为准。' }),
     button('保存自动开关', { small: true, block: true, icon: 'clock', onClick: saveSchedule, disabled: true }),
     element('p', { class: 'session-status', id: 'schedule-status', text: '连接仓库后可调整。' }),
   ]);
@@ -791,16 +776,6 @@ function buildInterface() {
   const runsCard = element('section', { class: 'card aside-card', 'aria-labelledby': 'runs-title' }, [
     element('div', { class: 'aside-heading' }, [element('h2', { id: 'runs-title', text: '最近运行' }), button('刷新', { small: true, icon: 'refresh', onClick: () => refreshRuns(), disabled: true })]),
     element('ul', { class: 'run-list', id: 'run-list', 'aria-live': 'polite' }),
-  ]);
-
-  const routeCard = element('section', { class: 'card aside-card route-card', 'aria-labelledby': 'route-title' }, [
-    element('div', { class: 'aside-heading' }, [element('h2', { id: 'route-title', text: '运行路径' }), icon('activity', true)]),
-    element('div', { class: 'route' }, [
-      element('div', { class: 'route-stop' }, [element('div', { class: 'route-stop-icon' }, icon('key', true)), element('div', { class: 'route-stop-text' }, [element('strong', { text: '私有仓库' }), element('span', { text: '加密凭据与工作流' })])]), element('div', { class: 'route-line' }),
-      element('div', { class: 'route-stop' }, [element('div', { class: 'route-stop-icon' }, icon('server', true)), element('div', { class: 'route-stop-text' }, [element('strong', { text: 'GitHub Actions' }), element('span', { text: '隔离执行与台账' })])]), element('div', { class: 'route-line' }),
-      element('div', { class: 'route-stop' }, [element('div', { class: 'route-stop-icon' }, icon('upload', true)), element('div', { class: 'route-stop-text' }, [element('strong', { text: 'Garmin' }), element('span', { text: '按目标区域上传' })])]),
-    ]),
-    element('p', { class: 'aside-caption', text: '浏览器不会直连 OneLap 或 Garmin；授权与同步都在你的私有 Actions 任务中完成。' }),
   ]);
 
   const oauthDialog = element('dialog', { class: 'oauth-dialog', id: 'garmin-oauth-dialog', 'aria-labelledby': 'garmin-oauth-title' }, [
@@ -830,18 +805,18 @@ function buildInterface() {
   });
   oauthDialog.addEventListener('close', clearGarminOAuthForm);
 
-  const main = element('main', { class: 'main' }, [
-    element('div', { class: 'page-heading' }, [element('div', {}, [element('p', { class: 'eyebrow', text: 'PRIVATE AUTOMATION' }), element('h1', { text: 'OneLap 到 Garmin 同步' }), element('p', { class: 'intro-copy', text: '在自己的 GitHub 私有仓库中保存配置、运行同步，并查看任务状态。' })]), element('div', { class: 'hero-decoration' }, icon('activity'))]),
+  // Create the forms once; mountDashboard places them in the page layout.
+  app.replaceChildren(connectionPill,
     element('section', { class: 'status-grid', 'aria-label': '当前状态' }, [
-      element('div', { class: 'status-card' }, [element('span', { class: 'status-icon' }, icon('key')), element('div', {}, [element('p', { class: 'status-label', text: 'GITHUB' }), element('p', { class: 'status-value', id: 'connection-value', text: '等待连接' })])]),
-      element('div', { class: 'status-card' }, [element('span', { class: 'status-icon' }, icon('server')), element('div', {}, [element('p', { class: 'status-label', text: '同步程序' }), element('p', { class: 'status-value', id: 'installation-value', text: '尚未安装' })])]),
-      element('div', { class: 'status-card' }, [element('span', { class: 'status-icon' }, icon('clock')), element('div', {}, [element('p', { class: 'status-label', text: '自动同步' }), element('p', { class: 'status-value', id: 'schedule-value', text: '自动同步未开启' })])]),
+      ...[['connection-value', 'GitHub', '等待连接'], ['installation-value', '同步程序', '尚未安装'], ['schedule-value', '自动同步', '尚未开启']].map(([id, label, text]) => element('div', { class: 'status-card' }, [element('p', { class: 'status-label', text: label }), element('p', { class: 'status-value', id, text })])),
     ]),
-    element('div', { class: 'content-grid' }, [element('div', { class: 'main-column' }, [card('connection', '01', '连接私有仓库', '使用 Fine-grained Token 验证仓库与权限。', connectionBody, { text: '未连接' }), card('install', '02', '安装同步程序', '只在专用私有仓库中创建一次安全安装提交。', installBody, { text: '等待连接' }), card('settings', '03', '保存运行设置', 'Secret 经 GitHub 公钥加密，网页不保存任何凭据。', settingsBody, { text: '等待连接' }), card('run', '04', '运行与核对', '提交 GitHub Actions 工作流，任务执行时不会暴露凭据。', runBody, { text: '等待连接' })]), element('aside', { class: 'aside-column', 'aria-label': '运行辅助信息' }, [routeCard, scheduleCard, runsCard, element('div', { class: 'aside-tip' }, [icon('shield'), element('h3', { text: '凭据边界' }), element('p', { text: '网页只使用 Token 调用 GitHub API。账号密码只在本页内存和加密的临时 Secret 中短暂存在。' })])])]),
-    element('p', { class: 'status-message', id: 'activity-status', role: 'status', text: '连接后可安装、保存并运行任务。' }),
-    element('footer', { class: 'footer' }, [element('span', {}, [element('strong', { text: '个人私有仓库工具' }), document.createTextNode(' · 凭据仅由 GitHub Actions 管理')]), element('a', { href: 'https://docs.github.com/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions', target: '_blank', rel: 'noopener noreferrer', text: 'GitHub Secrets 文档' })]),
-  ]);
-  app.replaceChildren(element('div', { class: 'shell' }, [sidebar, element('div', { class: 'workspace' }, [topbar, main])]), oauthDialog);
+    card('connection', '01', '连接私有仓库', '使用 GitHub Token 连接专用私有仓库。', connectionBody, { text: '未连接' }),
+    card('install', '02', '安装同步程序', '将同步程序安装到私有仓库。', installBody, { text: '等待连接' }),
+    card('settings', '03', '保存运行设置', '凭据加密保存到仓库 Secrets。', settingsBody, { text: '等待连接' }),
+    card('run', '04', '运行与核对', '通过 GitHub Actions 执行同步与核对。', runBody, { text: '等待连接' }),
+    scheduleCard, runsCard,
+    element('p', { class: 'status-message', id: 'activity-status', role: 'status', text: '' }),
+    oauthDialog);
   renderRuns([]);
 
   for (const node of document.querySelectorAll('button')) {
@@ -850,11 +825,6 @@ function buildInterface() {
   }
   for (const node of document.querySelectorAll('#connection-form button')) node.dataset.busyLock = '';
   get('garmin-oauth-submit').dataset.requiresConnection = '';
-  for (const link of document.querySelectorAll('.nav-item')) {
-    link.addEventListener('click', () => {
-      for (const item of document.querySelectorAll('.nav-item')) item.classList.toggle('active', item === link);
-    });
-  }
   dashboard = mountDashboard({ app, state, element, icon, button, notice, get, toast, actions: {
     dispatchSync, dispatchReconcile, refresh: () => runTask('正在刷新仓库与活动报告…', async () => { await refreshRepository({ quiet: true }); await loadRuns(); }),
   } });
