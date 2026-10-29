@@ -3,7 +3,7 @@ import hashlib
 import json
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import requests
 
@@ -54,6 +54,13 @@ class FakeStore:
 
 
 class OneLapTest(unittest.TestCase):
+    def setUp(self):
+        # These tests isolate authentication/list signing. The real discovery
+        # request sequence is covered separately in test_onelap_import.py.
+        patcher = patch.object(OneLapClient, "import_latest_records")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_sign_headers_are_deterministic_with_fixed_inputs(self):
         headers = generate_sign_headers(
             {"page": 1, "limit": 20},

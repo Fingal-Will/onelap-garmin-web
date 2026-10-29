@@ -22,6 +22,8 @@ ONELAP_BASE_APP_URL = "https://otm.onelap.cn"
 ONELAP_RECORD_PAGE_URL = f"{ONELAP_BASE_APP_URL}/recordPage"
 ONELAP_LOGIN_API = f"{ONELAP_BASE_APP_URL}/api/login"
 ONELAP_REFRESH_API = f"{ONELAP_BASE_APP_URL}/api/token"
+ONELAP_IMPORT_API = f"{ONELAP_BASE_APP_URL}/api/otm/ride_record/capability_list"
+ONELAP_IMPORT_MAX_ROUNDS = 3
 ONELAP_LIST_API = f"{ONELAP_BASE_APP_URL}/api/otm/ride_record/list"
 ONELAP_DETAIL_API = (
     f"{ONELAP_BASE_APP_URL}/api/otm/ride_record/analysis/{{record_id}}"
@@ -51,6 +53,7 @@ class OneLapAuthenticationError(RuntimeError):
 class OneLapTokens:
     token: str = ""
     refresh_token: str = ""
+    uid: str = ""
 
 
 class OneLapTokenStore(Protocol):
@@ -275,15 +278,19 @@ class ActivityPage:
     items: list[dict[str, Any]]
     total: int
     total_pages: int
+    has_more: bool | None = None
+    page_size: int = 20
 
     @property
     def is_last(self) -> bool:
         if not self.items:
             return True
+        if self.has_more is not None:
+            return not self.has_more
         if self.total_pages:
             return self.page >= self.total_pages
         if self.total:
-            return self.page * 20 >= self.total
+            return self.page * self.page_size >= self.total
         return False
 
 
@@ -312,6 +319,7 @@ class OneLapClient:
                 refresh_token=(
                     stored.refresh_token or self.manual_tokens.refresh_token
                 ),
+                uid=stored.uid if stored.token else "",
             )
             self._pending_persist = self.tokens != stored
         else:
@@ -327,6 +335,7 @@ class OneLapClient:
             }
         )
         self._apply_authorization_header()
+        self._latest_imported = False
 
     @staticmethod
     def _build_session() -> requests.Session:
@@ -360,10 +369,12 @@ class OneLapClient:
         refresh_token: str,
         *,
         persist: bool,
+        uid: str | None = None,
     ) -> None:
         self.tokens = OneLapTokens(
             token=token.strip(),
             refresh_token=refresh_token.strip(),
+            uid=self.tokens.uid if uid is None else uid,
         )
         self._apply_authorization_header()
         self._pending_persist = not persist
@@ -466,6 +477,7 @@ class OneLapClient:
             str(payload.get("token") or ""),
             str(payload.get("refresh_token") or ""),
             persist=True,
+            uid=self._login_uid(payload),
         )
         LOGGER.info("OneLap 账号密码登录成功，已取得新会话")
 
@@ -503,6 +515,7 @@ class OneLapClient:
             self.manual_tokens.token,
             self.manual_tokens.refresh_token,
             persist=False,
+            uid="",
         )
         LOGGER.info("已采用手工提供的 OneLap access token")
         return True
@@ -570,7 +583,80 @@ class OneLapClient:
             self._save_tokens()
         return response
 
+    @staticmethod
+    def _login_uid(payload: dict[str, Any]) -> str:
+        userinfo = payload.get("userinfo")
+        uid = userinfo.get("uid") if isinstance(userinfo, dict) else None
+        if isinstance(uid, (str, int)) and not isinstance(uid, bool):
+            return str(uid).strip()
+        return ""
+
+    def import_latest_records(self) -> None:
+        """每个客户端首次读列表前，把 App 最新记录导入 OTM；失败可重试。"""
+        if self._latest_imported:
+            return
+        self.ensure_authenticated()
+        if not self.tokens.uid:
+            if self.account and self.password:
+                # 旧加密会话没有 UID；只需重新登录一次，后续运行沿用加密保存的 UID。
+                self._login()
+            else:
+                LOGGER.warning(
+                    "OneLap 会话缺少账号 UID，无法导入最新骑行；本次仅读取 OTM 已有记录。"
+                    "请配置 ONELAP_ACCOUNT / ONELAP_PASSWORD 自动获取 UID。"
+                )
+                self._latest_imported = True
+                return
+        if not self.tokens.uid:
+            raise RuntimeError("OneLap 登录响应缺少账号 UID，无法导入最新骑行")
+
+        imported = 0
+        for round_number in range(1, ONELAP_IMPORT_MAX_ROUNDS + 1):
+            payload = {"uid": self.tokens.uid}
+            response = self._request(
+                "POST",
+                ONELAP_IMPORT_API,
+                "导入最新骑行到 OTM",
+                json=payload,
+                headers_factory=lambda: generate_sign_headers(payload),
+                timeout=60,
+            )
+            try:
+                body = response.json()
+            except ValueError:
+                raise RuntimeError("OneLap OTM 导入没有返回有效 JSON") from None
+            finally:
+                self._close_response(response)
+            if not isinstance(body, dict) or body.get("code") != 200:
+                raise RuntimeError("OneLap OTM 导入失败：接口返回异常状态")
+            data = body.get("data")
+            counts = data.get("sync") if isinstance(data, dict) else None
+            if not isinstance(counts, dict):
+                raise RuntimeError("OneLap OTM 导入响应缺少 sync 计数")
+            for key in ("total", "inserted", "skipped", "failed"):
+                value = counts.get(key)
+                if type(value) is not int or value < 0:
+                    raise RuntimeError("OneLap OTM 导入计数格式异常")
+            LOGGER.info(
+                "OneLap OTM 导入第 %s 轮：候选 %s，新增 %s，跳过 %s，失败 %s",
+                round_number, counts["total"], counts["inserted"],
+                counts["skipped"], counts["failed"],
+            )
+            if counts["failed"]:
+                raise RuntimeError("OneLap OTM 导入存在失败记录，请稍后重试")
+            imported += counts["inserted"]
+            if counts["inserted"] == 0 or counts["inserted"] < counts["total"]:
+                break
+        else:
+            LOGGER.warning(
+                "OneLap OTM 导入已达 %s 轮上限，后续同步将再次检查最新记录",
+                ONELAP_IMPORT_MAX_ROUNDS,
+            )
+        self._latest_imported = True
+        LOGGER.info("OneLap OTM 最新记录导入完成：本次新增 %s 条", imported)
+
     def fetch_page(self, page: int, page_size: int = 20) -> ActivityPage:
+        self.import_latest_records()
         payload = {"page": page, "limit": page_size}
         response = self._request(
             "POST",
@@ -580,9 +666,14 @@ class OneLapClient:
             headers_factory=lambda: generate_sign_headers(payload),
             timeout=30,
         )
-        data = response.json()
+        try:
+            data = response.json()
+        finally:
+            self._close_response(response)
         if not isinstance(data, dict):
             raise RuntimeError("OneLap 活动列表返回的不是 JSON 对象")
+        if data.get("code") not in (None, 200):
+            raise RuntimeError("OneLap 活动列表查询失败：接口返回异常状态")
         page_data = data.get("data")
         if not isinstance(page_data, dict):
             message = data.get("message") or data.get("msg") or "认证可能已失效"
@@ -590,11 +681,19 @@ class OneLapClient:
         items = page_data.get("list") or []
         if not isinstance(items, list):
             raise RuntimeError("OneLap 活动列表返回格式异常")
+        pagination = page_data.get("pagination")
+        if not isinstance(pagination, dict):
+            pagination = {}
+        has_more = pagination.get("has_more")
         return ActivityPage(
             page=page,
             items=[item for item in items if isinstance(item, dict)],
-            total=int(page_data.get("total") or 0),
-            total_pages=int(page_data.get("pages") or 0),
+            total=int(pagination.get("total") or page_data.get("total") or 0),
+            total_pages=int(
+                pagination.get("total_pages") or page_data.get("pages") or 0
+            ),
+            has_more=has_more if isinstance(has_more, bool) else None,
+            page_size=page_size,
         )
 
     def iter_pages(

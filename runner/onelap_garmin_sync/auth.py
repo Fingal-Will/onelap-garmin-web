@@ -51,7 +51,11 @@ class EncryptedOneLapSessionStore:
         refresh_token = str(payload.get("refresh_token") or "").strip()
         if not token and not refresh_token:
             return None
-        return OneLapTokens(token=token, refresh_token=refresh_token)
+        return OneLapTokens(
+            token=token,
+            refresh_token=refresh_token,
+            uid=str(payload.get("uid") or "").strip(),
+        )
 
     def save(self, tokens: OneLapTokens) -> None:
         if self._fernet is None:

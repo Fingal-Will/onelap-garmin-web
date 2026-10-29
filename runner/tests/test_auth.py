@@ -13,14 +13,28 @@ class AuthStoreTest(unittest.TestCase):
             ledger = Ledger(Path(temporary) / "sync.db")
             try:
                 store = EncryptedOneLapSessionStore(ledger, "session-key")
-                tokens = OneLapTokens("secret-access", "secret-refresh")
+                tokens = OneLapTokens("secret-access", "secret-refresh", "secret-uid")
                 store.save(tokens)
 
                 encrypted = ledger.get_auth_state("onelap")
                 self.assertIsNotNone(encrypted)
                 self.assertNotIn(b"secret-access", encrypted)
                 self.assertNotIn(b"secret-refresh", encrypted)
+                self.assertNotIn(b"secret-uid", encrypted)
                 self.assertEqual(store.load(), tokens)
+            finally:
+                ledger.close()
+
+    def test_old_encrypted_session_without_uid_is_still_readable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = Ledger(Path(temporary) / "sync.db")
+            try:
+                store = EncryptedOneLapSessionStore(ledger, "session-key")
+                # Exact schema written before UID persistence was introduced.
+                ledger.set_auth_state("onelap", store._fernet.encrypt(
+                    b'{"token":"old-access","refresh_token":"old-refresh"}'
+                ))
+                self.assertEqual(store.load(), OneLapTokens("old-access", "old-refresh", ""))
             finally:
                 ledger.close()
 
