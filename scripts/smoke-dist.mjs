@@ -10,6 +10,10 @@ const html = await readFile(path.join(dist, 'index.html'), 'utf8');
 const { window } = parseHTML(html);
 const { document } = window;
 assert.ok(document.querySelector('.startup-state'), '生产页面缺少 JavaScript 启动失败占位内容。');
+const viewport = document.querySelector('meta[name="viewport"]').content;
+assert.match(viewport, /width=device-width/);
+assert.match(viewport, /viewport-fit=cover/);
+assert.doesNotMatch(viewport, /user-scalable=no|maximum-scale=1(?:[, ]|$)/, '移动端不能禁止用户放大页面。');
 
 async function importWithTimeout(url) {
   let timeout;
@@ -127,6 +131,16 @@ const clickText = text => {
 };
 const navigate = route => document.querySelector(`a[data-page="${route}"]`).click();
 const credentialInput = document.querySelector('#onelap-password');
+assert.equal(document.querySelectorAll('nav[aria-label="主导航"]').length, 1, '桌面和移动端共用一套导航，避免重复操作入口。');
+assert.equal(document.querySelectorAll('.nav-item').length, 5);
+assert.equal(document.querySelector('#mobile-menu'), null, '移动端不再使用遮挡内容的侧栏开关。');
+assert.equal(document.querySelector('.nav-item[aria-current="page"]').dataset.page, 'overview');
+assert.equal(document.querySelector('[aria-label="刷新数据"]').textContent, '刷新');
+document.querySelector('#mobile-repository').click();
+assert.equal(document.querySelector('#settings-panel-deployment').hidden, false, '移动端仓库入口应直接打开连接设置。');
+assert.equal(document.querySelector('.nav-item[aria-current="page"]').dataset.page, 'settings');
+assert.equal(document.querySelector('#onelap-password'), credentialInput);
+navigate('overview');
 assert.equal(document.querySelector('#demo-toggle'), null);
 assert.equal(document.querySelector('.topbar-date'), null);
 assert.doesNotMatch(document.body.textContent, /体验示例|虚构数据|个人私有实例|欢迎使用/);
@@ -149,6 +163,11 @@ assert.equal(document.querySelector('#onelap-password').disabled, false);
 navigate('activities');
 assert.equal(document.querySelector('#page-title').textContent, '活动');
 assert.equal(document.querySelectorAll('#activity-results tbody tr').length, 10);
+const activityCard = document.querySelector('#activity-results tbody tr');
+assert.equal(activityCard.querySelectorAll('.status-button').length, 3, '每条活动仍提供三个独立目标的详情入口。');
+assert.deepEqual([...activityCard.querySelectorAll('.cell-label')].map(node => node.textContent), ['活动', '开始时间 · 北京时间', 'Garmin 中国区', 'Garmin 国际区', 'Strava', '操作']);
+assert.equal(activityCard.querySelectorAll('button').length, 5, '切换卡片布局不应复制活动操作。');
+assert.equal(document.querySelectorAll('.nav-item[aria-current="page"]').length, 1);
 const search = document.querySelector('#activity-search');
 search.value = '周末耐力'; search.dispatchEvent(new window.Event('input'));
 assert.equal(document.querySelectorAll('#activity-results tbody tr').length, 1);
@@ -271,4 +290,4 @@ await importWithTimeout(`${pathToFileURL(entry).href}?embedded=${Date.now()}`);
 assert.equal(embeddedDocument.querySelector('h1')?.textContent, '请在新窗口打开控制台');
 assert.equal(embeddedDocument.querySelector('a[target="_blank"]')?.getAttribute('href'), './');
 
-console.log('Pages 生产包启动、真实连接、筛选、运行报告、模拟证据、强制确认、断开清理和嵌入保护检查通过（离线 API）。');
+console.log('Pages 生产包启动、共用导航、移动端仓库入口、活动卡片语义、真实连接、筛选、运行报告、模拟证据、强制确认、断开清理和嵌入保护检查通过（离线 API，无浏览器）。');

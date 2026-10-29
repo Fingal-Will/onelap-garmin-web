@@ -1,0 +1,222 @@
+/* Adapt to viewport changes without user-agent sniffing or a second set of forms.
+   The touch query also covers phones in landscape; larger tablets keep the sidebar. */
+@media (max-width: 900px), (max-width: 1180px) and (hover: none) and (pointer: coarse) {
+  :root { --mobile-nav-height: 76px; }
+  html { scroll-padding-top: 92px; scroll-padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + 16px); }
+  body { background: #f3f7f8; }
+  body:has(dialog[open]) { overflow: hidden; }
+  h1 { font-size: 26px; line-height: 1.35; letter-spacing: -.5px; }
+  h2 { font-size: 16px; }
+  h3 { font-size: 15px; }
+  h1, h2, h3, p, label, a, .cell-value, .notice, .config-line { overflow-wrap: anywhere; }
+  input, select, textarea { font-size: 16px; min-height: 48px; border-radius: 10px; padding: 12px; }
+  textarea { min-height: 120px; line-height: 1.6; }
+  input[type=checkbox] { width: 21px; height: 21px; min-height: 21px; margin-top: 2px; }
+  .button, .button.small, .button.text-button { min-height: 44px; font-size: 13px; border-radius: 10px; padding: 10px 12px; }
+  .button.text-button { padding: 8px 0; }
+  .icon-button { width: 44px; height: 44px; min-height: 44px; }
+  .helper, .check-field small, .session-status, .status-message, .caption { font-size: 12px; }
+  .shell { display: flex; flex-direction: column; min-height: 100dvh; padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px)); }
+  .workspace { width: 100%; flex: 1; }
+
+  /* Persistent bottom navigation leaves the entire content width available. */
+  .sidebar {
+    position: fixed; inset: auto 0 0; z-index: 30; width: auto; height: auto;
+    padding: 8px max(12px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+    background: #fff; border: 0; border-top: 1px solid #dce7e9; box-shadow: 0 -4px 24px #18303806;
+  }
+  .sidebar .brand, .sidebar-bottom, .nav-label-full { display: none; }
+  .nav-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+  .nav-item {
+    min-width: 0; min-height: 59px; flex-direction: column; justify-content: center; gap: 3px;
+    padding: 7px 2px; border-radius: 12px; font-size: 11px; line-height: 1.4; color: #647d87;
+  }
+  .nav-item .icon { width: 23px; height: 23px; stroke-width: 1.8; }
+  .nav-label-short { display: block; white-space: nowrap; }
+  .nav-item.active { background: #e5f4f1; color: #087e80; }
+  .topbar {
+    position: sticky; top: 0; z-index: 20; height: auto; min-height: 70px; gap: 10px;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
+    background: #fff; border-bottom: 1px solid #e0e9ec;
+  }
+  .topbar-instance { min-width: 0; gap: 10px; }
+  .mobile-brand { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 36px; padding-bottom: 6px; border-radius: 11px; background: #e6f4f1; color: var(--accent); font: 700 43px/.8 Arial, sans-serif; }
+  .mobile-brand-name { display: block; font-size: 15px; line-height: 1.4; letter-spacing: -.3px; }
+  .instance-label { display: block; max-width: 100%; font-size: 11px; line-height: 1.6; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+  .topbar-actions { flex: none; gap: 5px; }
+  .connection-pill { padding: 4px 7px; border: 0; background: #f2f6f7; font-size: 11px; gap: 5px; }
+  .connection-pill.connected { background: #eaf7ef; }
+  .mobile-repository { display: inline-flex; background: #f3f7f8; border-radius: 12px; }
+  .main { padding: 24px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); }
+  .page-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; margin-bottom: 20px; }
+  .page-heading .muted { font-size: 13px; line-height: 1.6; margin-top: 5px; }
+  .page-heading > .actions-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; justify-content: stretch; }
+  .page-heading > .actions-row:has(> .button:nth-child(3)) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1.1fr); }
+  .page-heading > .actions-row > .button { width: 100%; min-height: 46px; padding: 10px 8px; }
+  .page-heading .refresh-label { display: none; }
+  .page-stack { gap: 16px; }
+  .panel, .card { border-radius: 16px; padding: 18px; box-shadow: 0 2px 8px #18303803; }
+  .panel-heading { gap: 10px; align-items: flex-start; margin-bottom: 14px; }
+  .panel-heading > h2 { padding-top: 8px; }
+  .panel-heading > .button { flex: none; max-width: 55%; }
+  .panel-heading .result-badge { margin-top: 7px; }
+  .two-columns, .target-detail-grid, .settings-layout, .form-grid, .setup-layout, #config-report { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .notice { padding: 14px; gap: 10px; border-radius: 12px; font-size: 13px; }
+  .notice > div { min-width: 0; }
+  .notice p { font-size: 12px; }
+  #data-banner { margin-bottom: 16px; }
+  .banner-actions { margin-top: -6px; justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
+
+  /* Compact source, readable per-target results, then a two-column summary. */
+  .sync-graph { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .graph-arrow { display: none; }
+  .source-column { padding: 0; border: 0; background: transparent; }
+  .source-column > p { margin-bottom: 8px; }
+  .source-tile { padding: 14px; justify-content: flex-start; gap: 14px; border-radius: 12px; }
+  .source-tile > div { min-width: 0; }
+  .source-tile h3 { font-size: 19px; margin-bottom: 0; }
+  .source-tile p { font-size: 12px; }
+  .source-tile small { font-size: 11px; margin-top: 5px; }
+  .source-tile .platform-logo { width: 44px; height: 44px; border-radius: 12px; font-size: 44px; }
+  .target-column { padding: 0; border: 0; background: transparent; gap: 8px; }
+  .target-column > p { margin: 2px 0 0; }
+  .target-tile { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; padding: 12px 10px; border-radius: 12px; }
+  .target-tile .platform-logo { width: 34px; height: 34px; border-radius: 9px; font-size: 21px; }
+  .target-copy strong { font-size: 13px; }
+  .target-copy small { font-size: 11px; }
+  .target-tile .result-badge { margin-left: 0; padding: 5px 6px; gap: 4px; font-size: 11px; }
+  .target-tile .chevron { display: none; }
+  .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .metric { min-width: 0; padding: 14px 10px; gap: 10px; border-radius: 12px; }
+  .metric > div { min-width: 0; }
+  .metric-icon { width: 32px; height: 36px; border-radius: 10px; }
+  .metric-value { font-size: 27px; }
+  .metric .muted { font-size: 11px; line-height: 1.45; }
+
+  /* Filters and tables share the existing controls; mobile rows become cards. */
+  .segmented { width: 100%; padding: 4px; border-radius: 12px; background: #eaf1f2; gap: 3px; }
+  .segmented .button { flex: 1; min-width: 0; padding: 9px 4px; border-radius: 8px; font-size: 12px; background: transparent; }
+  .segmented .selected { background: #fff; box-shadow: 0 1px 5px #1830380d; color: var(--accent); }
+  .filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 14px; border-radius: 14px; }
+  .filter-bar .search-field { grid-column: 1 / -1; }
+  .filter-field { min-width: 0; }
+  .filter-bar select { font-size: 16px; padding-left: 9px; }
+  .search-field > svg { top: 15px; }
+  .table-panel { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+  .table-scroll { overflow: visible; border: 0; border-radius: 0; }
+  .data-table { display: block; border: 0; white-space: normal; }
+  .data-table thead { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); }
+  .data-table tbody { display: grid; gap: 12px; }
+  .data-table tbody tr { display: grid; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 13px; background: #f8fbfc; }
+  .data-table tbody tr:hover { background: #f8fbfc; }
+  .data-table td { display: grid; grid-template-columns: minmax(0, 88px) minmax(0, 1fr); align-items: start; gap: 10px; min-width: 0; padding: 10px 0; border: 0; }
+  .data-table td + td { border-top: 1px solid #e8eef1; }
+  .cell-label { display: block; font-size: 11px; line-height: 1.65; color: #647d87; padding-top: 2px; }
+  .cell-value { max-width: 100%; font-size: 13px; }
+  .cell-value .button { max-width: 100%; }
+  .cell-value > .button.text-button { margin-block: -8px; }
+  .activity-table tbody tr { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; padding: 16px; background: #fff; box-shadow: 0 2px 8px #18303803; }
+  .activity-table tbody tr:hover { background: #fff; }
+  .activity-table td { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 0; border: 0; }
+  .activity-table td:first-child, .activity-table td:nth-child(2), .activity-table td:last-child { grid-column: 1 / -1; }
+  .activity-table td:first-child > .cell-label, .activity-table td:last-child > .cell-label { display: none; }
+  .activity-table td:nth-child(2) { grid-template-columns: auto minmax(0, 1fr); gap: 8px; padding-bottom: 12px; border-bottom: 1px solid #edf2f3; }
+  .activity-table td:nth-child(2) .cell-value { font-size: 12px; color: #647d87; text-align: right; }
+  .activity-table .activity-name { gap: 6px; }
+  .activity-table .activity-name .button { font-size: 16px; line-height: 1.5; font-weight: 650; }
+  .activity-table .activity-name small { font-size: 10px; color: #7d939c; }
+  .activity-table td:nth-child(n+3):nth-child(-n+5) { text-align: center; }
+  .activity-table td:nth-child(n+3):nth-child(-n+5) .cell-label { font-size: 10px; }
+  .activity-table .status-button { width: 100%; padding: 8px 3px; font-size: 11px; gap: 4px; border: 0; border-radius: 8px; }
+  .activity-table .status-button .icon { width: 14px; height: 14px; }
+  .activity-table td:last-child > .cell-value > .button { display: flex; width: 100%; background: #f0f7f7; color: var(--accent); }
+  .run-table tbody tr, .reconcile-table tbody tr { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
+  .run-table td, .reconcile-table td { grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 0; border: 0; }
+  .run-table td:first-child { grid-column: 1; grid-row: 1; }
+  .run-table td:nth-child(4) { grid-column: 2; grid-row: 1; justify-items: end; }
+  .run-table td:first-child > .cell-label, .run-table td:nth-child(4) > .cell-label, .run-table td:last-child > .cell-label,
+  .reconcile-table td:first-child > .cell-label, .reconcile-table td:last-child > .cell-label { display: none; }
+  .run-table td:nth-child(3) .cell-value { font-size: 12px; }
+  .run-table td:last-child, .reconcile-table td:first-child, .reconcile-table td:last-child { grid-column: 1 / -1; }
+  .run-table td:last-child .button, .reconcile-table td:last-child .button { display: flex; width: 100%; background: #edf5f5; }
+  .reconcile-table td:first-child .cell-value { font-size: 15px; font-weight: 650; }
+  .pagination { display: grid; gap: 12px; margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 13px; background: #fff; }
+  .pagination > .actions-row { display: grid; grid-template-columns: 1fr auto 1fr; width: 100%; gap: 12px; }
+  .pagination > p { font-size: 11px; }
+  .metadata-strip { gap: 12px; padding: 16px; border-radius: 13px; font-size: 12px; }
+  .metadata-strip > .mono { width: 100%; }
+  .evidence-list { grid-template-columns: minmax(0, 86px) minmax(0, 1fr); gap: 12px; }
+  .recovery-steps { flex-direction: column; padding: 16px 16px 16px 24px; gap: 12px; font-size: 12px; }
+  .timeline p { font-size: 12px; }
+
+  /* All account and task forms use a single column and comfortable tap targets. */
+  .tab-bar { gap: 0; justify-content: space-between; }
+  .tab-bar .tab-button { flex: 1; min-width: 0; padding: 13px 2px; border-radius: 0; font-size: 12px; }
+  .field { gap: 8px; }
+  .field-heading { align-items: flex-start; flex-wrap: wrap; }
+  .field .check-field { margin-top: 0; }
+  .check-field { min-height: 48px; padding: 13px 0; gap: 12px; line-height: 1.6; }
+  .config-line { align-items: flex-start; }
+  .settings-save .actions-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .oauth-field-actions .button { flex: 1; }
+  .reconcile-form { grid-template-columns: minmax(0, 1fr); }
+  .reconcile-form > p { grid-column: auto; }
+  .reconcile-form .actions-row { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .status-grid { grid-template-columns: minmax(0, 1fr); }
+  .card-header { flex-wrap: wrap; gap: 12px; }
+  .card-title { min-width: 0; }
+  .session-help summary { min-height: 44px; padding: 10px 0; font-size: 13px; }
+  .session-help p { font-size: 12px; }
+  .session-help pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .setup-stepper { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 0 0 2px; }
+  .setup-stepper li { min-width: 0; padding-bottom: 8px; }
+  .setup-stepper .button { display: flex; width: 100%; padding: 8px 2px; font-size: 11px; line-height: 1.6; justify-content: center; text-align: center; }
+  .empty-state { padding: 30px 8px; }
+  .empty-state .actions-row { justify-content: center; }
+  .footer { padding: 16px max(16px, env(safe-area-inset-right, 0px)) 20px max(16px, env(safe-area-inset-left, 0px)); }
+  .footer:has(.status-message:empty) { display: none; }
+
+  /* Full-height task sheets keep the action bar visible as the body scrolls. */
+  .manual-drawer, .oauth-dialog {
+    width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh;
+    margin: 0; border: 0; border-radius: 0;
+  }
+  .manual-drawer[open] { animation: none; }
+  .drawer-heading, .oauth-dialog-header { flex: none; padding: calc(16px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px)); gap: 12px; align-items: center; }
+  .drawer-heading h2, .oauth-dialog-header h2 { font-size: 21px; }
+  .drawer-body, .oauth-dialog-body { min-height: 0; flex: 1; padding: 20px max(16px, env(safe-area-inset-right, 0px)) 20px max(16px, env(safe-area-inset-left, 0px)); gap: 18px; overscroll-behavior-y: contain; }
+  .drawer-body .field > span, .drawer-body .notice p { font-size: 12px; }
+  .drawer-body .form-grid { gap: 16px; }
+  .drawer-footer, .oauth-dialog-footer { flex: none; padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); gap: 10px; box-shadow: 0 -4px 16px #18303804; }
+  .drawer-footer .button, .oauth-dialog-footer .button { min-height: 48px; }
+  .oauth-dialog > form { height: 100%; }
+  .oauth-dialog-footer .button { flex: 1; }
+  .confirm-dialog { width: 100%; max-width: 100%; max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 12px); margin: auto 0 0; border: 0; border-radius: 20px 20px 0 0; overscroll-behavior-y: contain; }
+  .confirm-dialog .drawer-heading { position: sticky; top: 0; z-index: 1; background: #fff; padding-top: 18px; }
+  .confirm-dialog .drawer-heading h2 { font-size: 18px; }
+  .confirm-dialog .drawer-footer { position: sticky; bottom: 0; }
+  .confirm-dialog .drawer-footer .button { flex: 1; }
+  .force-content { padding: 18px 16px 0; gap: 16px; }
+  .force-check { margin: 14px 16px; }
+  .scope-summary { padding: 16px; border-radius: 12px; }
+  .toast-region { left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + 12px); max-width: none; border-radius: 12px; }
+  .skip-link { left: 16px; }
+  .startup-state { min-height: 100dvh; padding: 16px; }
+  .startup-panel { padding: 28px 18px; border-radius: 16px; }
+}
+
+@media (max-width: 374px) {
+  .topbar { gap: 6px; }
+  .topbar-instance { gap: 7px; }
+  .mobile-brand { width: 32px; height: 32px; }
+  .topbar-actions { gap: 2px; }
+  .mobile-brand-name { font-size: 14px; }
+  .panel, .card { padding: 14px; }
+  .table-panel { padding: 0; }
+  .activity-table tbody tr { padding: 14px; gap: 10px 6px; }
+  .activity-table td:nth-child(2) { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .activity-table td:nth-child(2) .cell-value { text-align: left; }
+  .metric { padding: 12px 8px; gap: 8px; }
+  .metric-icon { width: 28px; }
+  .metric-value { font-size: 25px; }
+}

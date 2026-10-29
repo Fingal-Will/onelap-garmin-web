@@ -57,14 +57,11 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
   const go = (name, id = '') => { window.location.hash = `/${name}${id ? `/${encodeURIComponent(id)}` : ''}`; navigate(name, id); };
   const closeButton = (label, close) => button('', { icon: 'close', variant: 'icon-button', ariaLabel: label, onClick: close });
 
-  const nav = el('nav', { class: 'nav-list', 'aria-label': '主导航' }, Object.entries(PAGES).filter(([key]) => key !== 'setup').map(([key, [title, , symbol]]) => el('a', { href: `#/${key}`, class: 'nav-item', 'data-page': key, onClick: event => { event.preventDefault(); go(key); } }, [icon(symbol), el('span', { text: title })])));
-  const mobileToggle = button('', { id: 'mobile-menu', icon: 'settings', ariaLabel: '展开导航', variant: 'ghost', onClick: () => {
-    const open = document.body.classList.toggle('navigation-open');
-    mobileToggle.setAttribute('aria-expanded', String(open));
-  } });
-  mobileToggle.setAttribute('aria-expanded', 'false');
-  mobileToggle.setAttribute('aria-controls', 'dashboard-sidebar');
+  // One navigation tree: sidebar on desktop, bottom tabs on touch and narrow screens.
+  const shortLabels = { overview: '概览', activities: '活动', runs: '运行', reconcile: '核对', settings: '设置' };
+  const nav = el('nav', { class: 'nav-list', 'aria-label': '主导航' }, Object.entries(PAGES).filter(([key]) => key !== 'setup').map(([key, [title, , symbol]]) => el('a', { href: `#/${key}`, class: 'nav-item', 'aria-label': title, 'data-page': key, onClick: event => { event.preventDefault(); go(key); } }, [icon(symbol), el('span', { class: 'nav-label-full', 'aria-hidden': 'true', text: title }), el('span', { class: 'nav-label-short', 'aria-hidden': 'true', text: shortLabels[key] })])));
   const modeLabel = el('span', { class: 'instance-label' });
+  const repositoryButton = button('', { id: 'mobile-repository', icon: 'server', ariaLabel: '管理连接仓库', variant: 'mobile-repository icon-button', onClick: () => { settingsTab = 'deployment'; go('settings'); } });
   const title = el('h1', { id: 'page-title', tabIndex: '-1', text: '同步概览' });
   const subtitle = muted(PAGES.overview[1]);
   const content = el('div', { class: 'page-stack', id: 'page-content' });
@@ -170,9 +167,15 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
     return new Promise(resolve => { forceResolver = resolve; });
   }
 
-  function table(headers, data) {
-    return el('div', { class: 'table-scroll' }, el('table', { class: 'data-table' }, [el('thead', {}, el('tr', {}, headers.map(text => el('th', { scope: 'col', text })))),
-      el('tbody', {}, data.map(row => el('tr', {}, row.map(value => el('td', {}, typeof value === 'string' || typeof value === 'number' ? document.createTextNode(String(value)) : value)))))]));
+  function table(headers, data, kind = 'records') {
+    // Keep a single set of controls and table semantics when rows become mobile cards.
+    return el('div', { class: 'table-scroll' }, el('table', { class: `data-table ${kind}-table`, role: 'table' }, [
+      el('thead', { role: 'rowgroup' }, el('tr', { role: 'row' }, headers.map(text => el('th', { scope: 'col', role: 'columnheader', text })))),
+      el('tbody', { role: 'rowgroup' }, data.map(row => el('tr', { role: 'row' }, row.map((value, index) => el('td', { role: 'cell' }, [
+        el('span', { class: 'cell-label', 'aria-hidden': 'true', text: headers[index] }),
+        el('div', { class: 'cell-value' }, typeof value === 'string' || typeof value === 'number' ? document.createTextNode(String(value)) : value),
+      ]))))),
+    ]));
   }
   function activityTable(items, compact = false) {
     return table(['活动', '开始时间 · 北京时间', ...TARGETS.map(key => TARGET_NAMES[key]), '操作'], items.map(row => [
@@ -180,7 +183,7 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
       el('span', { class: 'numeric', text: formatTime(row.activity_time, compact) }),
       ...TARGETS.map(key => button(STATUS[uploadState(row.targets?.[key], targets().includes(key), retryLimit())][0], { variant: `status-button ${STATUS[uploadState(row.targets?.[key], targets().includes(key), retryLimit())][1]}`, icon: STATUS[uploadState(row.targets?.[key], targets().includes(key), retryLimit())][2], small: true, ariaLabel: `${row.name}，${TARGET_NAMES[key]}，查看结果`, onClick: () => { go('activities', row.id); get(`target-${key}`)?.focus(); } })),
       linkButton('查看详情', () => go('activities', row.id)),
-    ]));
+    ]), 'activity');
   }
   function sourceGraph() {
     const complete = configCompleteness(state.snapshot);
@@ -230,7 +233,7 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
   }
   function activityDetail() {
     const row = rows().find(item => item.id === detailId);
-    content.append(linkButton('返回活动列表', () => go('activities'), 'download'));
+    content.append(linkButton('返回活动列表', () => go('activities'), 'back'));
     if (!row) { content.append(empty('当前报告中未找到该活动', '这里只加载最近 200 条。请确认编号，或查看私有仓库的历史台账。')); return; }
     title.textContent = row.name;
     subtitle.textContent = activityComplete(row, targets()) ? '当前启用目标均已完成。' : '查看目标状态与处理记录。';
@@ -261,11 +264,11 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
       run.event === 'schedule' ? '自动计划' : run.event === 'workflow_dispatch' ? '手动触发' : run.event || '其他',
       formatTime(run.created_at), badge(run.status !== 'completed' ? 'uploading' : run.conclusion === 'success' ? 'success' : 'failed', run.status !== 'completed' ? '执行中' : run.conclusion === 'success' ? '执行成功' : run.conclusion === 'cancelled' ? '已取消' : '查看失败阶段'),
       linkButton('查看报告', () => go('runs', String(run.id))),
-    ]))] : [empty('暂时没有运行记录', '连接仓库后刷新，或先提交一次配置验证。')], button('刷新', { small: true, icon: 'refresh', onClick: () => refresh() })));
+    ]), 'run')] : [empty('暂时没有运行记录', '连接仓库后刷新，或先提交一次配置验证。')], button('刷新', { small: true, icon: 'refresh', onClick: () => refresh() })));
   }
   function runDetail() {
     const run = runs.find(item => String(item.id) === selectedRun);
-    content.append(linkButton('返回运行记录', () => go('runs'), 'clock'));
+    content.append(linkButton('返回运行记录', () => go('runs'), 'back'));
     if (!run) { content.append(empty('当前列表中没有该运行', '请刷新运行记录后重试。')); return; }
     title.textContent = '运行报告';
     subtitle.textContent = `${run.name || '同步工作流'} · ${formatTime(run.created_at)} · 北京时间`;
@@ -310,7 +313,7 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
     const total = ['present', 'missing', 'unverified', 'ambiguous'].reduce((sum, key) => sum + count(key), 0);
     reconcileData.replaceChildren(panel('核对结果', [stats([['目标结论', data?.ledger.available ? total : '—', 'activity'], ['确认存在', data?.ledger.available ? count('present') : '—', 'check', 'green'], ['明确缺失', data?.ledger.available ? count('missing') : '—', 'warning', 'red'], ['未核实 / 歧义', data?.ledger.available ? count('unverified') + count('ambiguous') : '—', 'clock', 'purple']]), muted('核对时间见各活动详情。')]));
     const candidates = rows().filter(row => ['CN', 'GLOBAL'].some(key => row.targets?.[key]?.reconciliation_status));
-    reconcileData.append(panel('活动核对明细', candidates.length ? [table(['活动', '中国区结论', '国际区结论', '操作'], candidates.slice(0, 20).map(row => [row.name, ...['CN', 'GLOBAL'].map(key => el('div', { class: 'evidence-cell' }, [badge(row.targets[key]?.reconciliation_status || 'unknown'), el('small', { class: 'muted', text: formatTime(row.targets[key]?.reconciliation_checked_at, true) })])), linkButton('查看详情', () => go('activities', row.id))]))] : [empty('暂无核对结论', '提交只核对任务，完成后刷新报告。')]));
+    reconcileData.append(panel('活动核对明细', candidates.length ? [table(['活动', '中国区结论', '国际区结论', '操作'], candidates.slice(0, 20).map(row => [row.name, ...['CN', 'GLOBAL'].map(key => el('div', { class: 'evidence-cell' }, [badge(row.targets[key]?.reconciliation_status || 'unknown'), el('small', { class: 'muted', text: formatTime(row.targets[key]?.reconciliation_checked_at, true) })])), linkButton('查看详情', () => go('activities', row.id))]), 'reconcile')] : [empty('暂无核对结论', '提交只核对任务，完成后刷新报告。')]));
     if (count('unverified') + count('ambiguous') > 0) reconcileData.append(notice('warning', '部分活动尚未核实', '请查看活动详情。补传仅处理明确缺失的 Garmin 活动。'));
   }
 
@@ -353,7 +356,7 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
     const complete = configCompleteness(snapshot);
     const values = snapshot.variables || {};
     replace(settingsSummary, panel('凭据状态', ['ONELAP', ...TARGETS].map(key => el('div', { class: 'config-line' }, [el('strong', { text: key === 'ONELAP' ? 'OneLap' : TARGET_NAMES[key] }), badge(!state.client ? 'unknown' : key !== 'ONELAP' && !targets().includes(key) ? 'disabled' : complete[key] ? 'success' : 'pending', !state.client ? '未读取' : key !== 'ONELAP' && !targets().includes(key) ? '未启用' : complete[key] ? '已保存' : '待配置')]))),
-      panel('已保存配置', [table(['设置', '已保存值', '来源'], [['Garmin 区域', ({ CN: '中国区', GLOBAL: '国际区', 'CN,GLOBAL': '双区' })[values.SYNC_TARGETS] || '自动判断', values.SYNC_TARGETS ? '仓库设置' : '默认值'], ['Strava', values.STRAVA_SYNC_ENABLED === 'true' ? '开启' : '关闭', values.STRAVA_SYNC_ENABLED ? '仓库设置' : '默认值'], ['模拟运行', values.SYNC_DRY_RUN === 'true' ? '开启' : '关闭', values.SYNC_DRY_RUN ? '仓库设置' : '默认值'], ['发现页数', values.ONELAP_DISCOVERY_PAGES || '10', values.ONELAP_DISCOVERY_PAGES ? '仓库设置' : '默认值']]), muted('运行参数由当前 Web Runner 的 仓库设置s 与单次输入确定；凭据来自 Secrets，仅显示名称是否存在。未保存的表单不代表已生效。')]),
+      panel('已保存配置', [table(['设置', '已保存值', '来源'], [['Garmin 区域', ({ CN: '中国区', GLOBAL: '国际区', 'CN,GLOBAL': '双区' })[values.SYNC_TARGETS] || '自动判断', values.SYNC_TARGETS ? '仓库设置' : '默认值'], ['Strava', values.STRAVA_SYNC_ENABLED === 'true' ? '开启' : '关闭', values.STRAVA_SYNC_ENABLED ? '仓库设置' : '默认值'], ['模拟运行', values.SYNC_DRY_RUN === 'true' ? '开启' : '关闭', values.SYNC_DRY_RUN ? '仓库设置' : '默认值'], ['发现页数', values.ONELAP_DISCOVERY_PAGES || '10', values.ONELAP_DISCOVERY_PAGES ? '仓库设置' : '默认值']]), muted('运行参数以已保存设置和本次输入为准。凭据仅显示是否保存；未保存的表单不会生效。')]),
       notice('warning', '授权状态需通过运行验证', '已保存凭据不代表授权有效，请执行配置验证。'),
       values.SYNC_DRY_RUN === 'true' ? notice('info', '仓库级模拟已开启', '即使单次取消模拟，Runner 仍不会上传。需关闭此设置并保存后再执行真实同步。') : null,
       button('首次配置向导', { variant: 'subtle', icon: 'check', onClick: () => go('setup') }));
@@ -404,7 +407,9 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
   function render() {
     title.textContent = PAGES[route]?.[0] || '同步概览';
     subtitle.textContent = PAGES[route]?.[1] || '';
-    replace(titleActions, button('刷新', { small: true, icon: 'refresh', onClick: () => refresh() }),
+    const refreshControl = button('刷新', { small: true, icon: 'refresh', ariaLabel: '刷新数据', onClick: () => refresh() });
+    refreshControl.querySelector('span').className = 'refresh-label';
+    replace(titleActions, refreshControl,
       route === 'overview' ? button('核对 Garmin', { icon: 'shield', variant: 'subtle', onClick: () => go('reconcile') }) : null,
       button('手动同步', { id: 'open-manual', icon: 'refresh', variant: 'primary', onClick: () => openDrawer() }));
     for (const node of nav.querySelectorAll('a')) { const active = node.dataset.page === route || node.dataset.page === 'settings' && route === 'setup'; node.classList.toggle('active', active); if (active) node.setAttribute('aria-current', 'page'); else node.removeAttribute('aria-current'); }
@@ -421,8 +426,8 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
   }
   function navigate(name, id = '') {
     route = PAGES[name] ? name : 'overview'; detailId = route === 'activities' ? id : ''; selectedRun = route === 'runs' ? id : '';
-    document.body.classList.remove('navigation-open'); mobileToggle.setAttribute('aria-expanded', 'false');
     render(); title.focus?.({ preventScroll: true });
+    window.scrollTo?.({ top: 0, behavior: 'instant' });
   }
   function routeFromHash() {
     const parts = window.location.hash.replace(/^#\/?/, '').split('/');
@@ -453,7 +458,7 @@ export function mountDashboard({ app, state, element: el, icon, button, notice, 
   }
   function setRuns(value) { runs = value; requestGeneration++; jobs.clear(); captureValidation(); render(); }
   function setReport(value, error = '') { if (!error) report = value; captureValidation(); reportError = error ? `${error}${report ? ' 当前保留上次成功读取的报告，请按报告时间判断。' : ''}` : ''; update(); }
-  const shell = el('div', { class: 'shell' }, [sidebar, el('div', { class: 'workspace' }, [el('header', { class: 'topbar' }, [el('div', { class: 'topbar-instance' }, [mobileToggle, modeLabel]), el('div', { class: 'topbar-actions' }, [old.pill])]), main, el('footer', { class: 'footer' }, [old.status])])]);
+  const shell = el('div', { class: 'shell' }, [sidebar, el('div', { class: 'workspace' }, [el('header', { class: 'topbar' }, [el('div', { class: 'topbar-instance' }, [el('span', { class: 'mobile-brand', 'aria-hidden': 'true', text: '»' }), el('div', { class: 'instance-copy' }, [el('strong', { class: 'mobile-brand-name', text: 'OneLap Sync' }), modeLabel])]), el('div', { class: 'topbar-actions' }, [old.pill, repositoryButton])]), main, el('footer', { class: 'footer' }, [old.status])])]);
   app.replaceChildren(el('a', { class: 'skip-link', href: '#main-content', text: '跳到主要内容' }), shell, storage, old.oauth, drawer, forceDialog);
   window.addEventListener('hashchange', routeFromHash);
   routeFromHash(); update();

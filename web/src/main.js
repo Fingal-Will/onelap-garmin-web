@@ -2,6 +2,7 @@ import { mountDashboard } from './dashboard.js';
 import { GitHubClient } from './github.js';
 import { authorizeGarmin, cleanupGarminOAuthSecrets } from './oauth.js';
 import { adaptSettingsForRunner, buildSettings, requireSyncTargets, resolveSyncTargets } from './settings.js';
+import ArrowLeft from 'lucide/dist/esm/icons/arrow-left.mjs';
 import Activity from 'lucide/dist/esm/icons/activity.mjs';
 import Check from 'lucide/dist/esm/icons/check.mjs';
 import Clock from 'lucide/dist/esm/icons/clock.mjs';
@@ -21,6 +22,7 @@ import Upload from 'lucide/dist/esm/icons/upload.mjs';
 import X from 'lucide/dist/esm/icons/x.mjs';
 import './styles.css';
 import './session-help.css';
+import './mobile.css';
 
 const app = document.querySelector('#app');
 if (!app) throw new Error('页面缺少应用入口。');
@@ -57,6 +59,7 @@ function element(name, attributes = {}, children = []) {
 function icon(name, small = false) {
   const icons = {
     activity: Activity,
+    back: ArrowLeft,
     check: Check,
     clock: Clock,
     cloud: Cloud,
