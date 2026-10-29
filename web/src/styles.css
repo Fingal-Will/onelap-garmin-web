@@ -58,7 +58,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overf
 .dot { width: 6px; height: 6px; border-radius: 100%; background: #9aaab0; }
 .connected .dot { background: #119269; }
 .connected { color: var(--success); border-color: #d0e9de; }
-.nav-label-short, .mobile-brand, .mobile-brand-name, .mobile-repository { display: none; }
+.nav-label-short, .mobile-brand, .mobile-brand-name, .topbar .mobile-repository { display: none; }
 .instance-copy { min-width: 0; }
 .cell-label { display: none; }
 .cell-value { min-width: 0; }
