@@ -10,6 +10,25 @@
   h3 { font-size: 15px; }
   h1, h2, h3, p, label, a, .cell-value, .notice, .config-line { overflow-wrap: anywhere; }
   input, select, textarea { font-size: 16px; min-height: 48px; border-radius: 10px; padding: 12px; }
+  /* Keep the native picker and keyboard behavior; style only the closed control.
+     Reserve a separate trailing area so long values never collide with the arrow. */
+  select:not([multiple]):not([size]) {
+    -webkit-appearance: none; appearance: none;
+    min-width: 0; max-width: 100%; min-height: 48px;
+    padding: 11px 44px 11px 14px; border-radius: 12px;
+    border-color: #cfdee3; background-color: #f8fbfc;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='m6 8 4 4 4-4' stroke='%23647d87' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 14px center; background-size: 20px 20px;
+    color: var(--ink); font-size: 16px; font-weight: 400; line-height: 1.5;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  select:not([multiple]):not([size]):focus:not(:disabled) {
+    border-color: var(--accent); box-shadow: 0 0 0 3px #087e8014;
+  }
+  select:not([multiple]):not([size]):disabled {
+    background-color: #eff4f6; border-color: #dce6ea; color: #72858e;
+    opacity: 1; -webkit-text-fill-color: #72858e;
+  }
   textarea { min-height: 120px; line-height: 1.6; }
   input[type=checkbox] { width: 21px; height: 21px; min-height: 21px; margin-top: 2px; }
   .button, .button.small, .button.text-button { min-height: 44px; font-size: 13px; border-radius: 10px; padding: 10px 12px; }
@@ -98,7 +117,10 @@
   .filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 14px; border-radius: 14px; }
   .filter-bar .search-field { grid-column: 1 / -1; }
   .filter-field { min-width: 0; }
-  .filter-bar select { font-size: 16px; padding-left: 9px; }
+  .filter-bar select:not(:disabled):has(option:checked:not(:first-child)) {
+    border-color: #8fcac6; background-color: #eaf7f4; color: #087e80;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='m6 8 4 4 4-4' stroke='%23087e80' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
   .search-field > svg { top: 15px; }
   .table-panel { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
   .table-scroll { overflow: visible; border: 0; border-radius: 0; }
@@ -217,4 +239,11 @@
   .metric { padding: 12px 8px; gap: 8px; }
   .metric-icon { width: 28px; }
   .metric-value { font-size: 25px; }
+}
+
+/* Let the operating system draw the arrow in high-contrast display modes. */
+@media (forced-colors: active) {
+  select:not([multiple]):not([size]), .filter-bar select:not(:disabled):has(option:checked:not(:first-child)) {
+    -webkit-appearance: auto; appearance: auto; background-image: none; padding-inline: 12px;
+  }
 }
